@@ -1,4 +1,7 @@
 import jax
+import jax
+jax.config.update('jax_platform_name', 'cpu')
+
 import jax.numpy as jnp
 import equinox as eqx
 import json
@@ -15,7 +18,16 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import numpy as np 
 import optax
-
+import nvidia_smi
+nvidia_smi.nvmlInit()
+i = 0
+deviceCount = nvidia_smi.nvmlDeviceGetCount()
+handle = nvidia_smi.nvmlDeviceGetHandleByIndex(0)
+info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+print("First -- Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total,\
+    info.total/(1024*1024), info.free/(1024*1024), info.used/(1024*1024)))
+    
+    
 # Mistral-7B Model setting
 class ModelArgs(NamedTuple):
     dim: int
@@ -115,13 +127,21 @@ class ReactionDataset(Dataset):
 
 #Test these classes below!
 key=jax.random.PRNGKey(0)
-path="/lcrc/project/FOUND4CHEM/MISTRAL_CL_CONDA/mistral_jax/model_files"
+path="/vast/users/kraghavan/Mistral/"
+
+
+info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+print("Before the model is defined -- Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, info.total, info.free, info.used))
 
 Mistral = Mistral7B(path,key) #<---- Class
 mistral_model = Mistral.get_mistral_pretrained() #<---- Actual model weights!
 
+info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+print("After the model is defined --Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total,\
+    info.total/(1024*1024), info.free/(1024*1024), info.used/(1024*1024)))
+
 # Data Loading and Preprocessing
-data_file  = "/lcrc/project/FOUND4CHEM/projects/Mistral_7B/data/Suzuki-Miyaura/aap9112_Data_File_S1.xlsx"
+data_file  = "../data/Suzuki-Miyaura/aap9112_Data_File_S1.xlsx"
 df = make_reaction(data_file) #df[['rxn', 'y']]
 #tokenized_smiles, yields, max_len = preprocess_data(df)
 
@@ -131,7 +151,14 @@ padded_a = [sublist + [0] * (max_len - len(sublist)) for sublist in tokenized_rx
 inp_array = np.stack([np.array(aa) for aa in padded_a]) # jnp.array(padded_a)
 yields = np.array(df['y'], dtype=jnp.float32)
 
+
+info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+print("Before precompute -- Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, info.total, info.free, info.used))
+
 cache_k, cache_v, cos_freq, sin_freq, positions_padded = Mistral._precompute(max_len)
+
+info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+print("After precompute -- Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, info.total, info.free, info.used))
 
 # 80/20 split
 train_rxn, val_rxn, train_yields, val_yields = train_test_split(
@@ -157,6 +184,9 @@ val_loader = DataLoader(val_dataset, batch_size=Mistral.args.max_batch_size, shu
 embed_dim = 4096  # Assuming embedding dimension of Mistral
 num_heads = 1  # Single attention head for regression task
 predictor = MultiHeadAttentionRegression(num_heads, embed_dim,  key)
+
+info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+print("Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, info.total, info.free, info.used))
 
 
 # Step 1: Fine-tune the model
@@ -192,6 +222,11 @@ opt_state = optimizer.init(eqx.filter(predictor, eqx.is_array))  # optimizer.ini
 
 num_epochs = 2
 step = 1  
+
+info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+print("Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, info.total, info.free, info.used))
+
+
 # Training Loop with DataLoader
 for epoch in range(num_epochs):
     running_loss = 0.0
