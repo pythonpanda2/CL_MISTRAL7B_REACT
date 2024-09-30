@@ -1,7 +1,9 @@
-import jax
-import jax
-jax.config.update('jax_platform_name', 'cpu')
+import os
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']="False"
+# os.environ[]
 
+import jax
+# jax.config.update('jax_platform_name', 'cpu')
 import jax.numpy as jnp
 import equinox as eqx
 import json
@@ -39,7 +41,7 @@ class ModelArgs(NamedTuple):
     vocab_size: int
     sliding_window: int
     norm_eps: float
-    max_batch_size: int = 32
+    max_batch_size: int = 16
 
 
 #Load the pre-trained Mistral model, tokenize inputs
@@ -53,19 +55,38 @@ class Mistral7B:
         with open(self.mistral_param_path, "r") as f:
             self.args = ModelArgs(**json.loads(f.read()))
         self.mistral_model = Transformer(self.args, key, dtype)
-
+        self.mistral_model = eqx.tree_deserialise_leaves(self.mistral_pretrained_path , self.mistral_model)
+    
     def get_mistral_pretrained(self):
-        return eqx.tree_deserialise_leaves(self.mistral_pretrained_path , self.mistral_model)
+        self.mistral_model = eqx.tree_deserialise_leaves(self.mistral_pretrained_path , self.mistral_model)
 
     def tokenize_smiles(self, smiles):
         return self.sp.encode(smiles)
 
     def _precompute(self,max_len):
+        
+        info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+        print("cache k --Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total,\
+            info.total/(1024*1024), info.free/(1024*1024), info.used/(1024*1024)))
+        
         cache_k = jnp.zeros((self.args.max_batch_size, self.args.n_layers, self.args.sliding_window, self.args.n_kv_heads, self.args.head_dim), dtype=jnp.bfloat16)
+        info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+        print("cache v --Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total,\
+            info.total/(1024*1024), info.free/(1024*1024), info.used/(1024*1024)))
         cache_v = jnp.zeros((self.args.max_batch_size, self.args.n_layers, self.args.sliding_window, self.args.n_kv_heads, self.args.head_dim), dtype=jnp.bfloat16)
+        info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+        print("cos_freq, sin_freq -- Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total,\
+            info.total/(1024*1024), info.free/(1024*1024), info.used/(1024*1024)))
         cos_freq, sin_freq = precompute_frequencies(self.args.head_dim, max_len)
         positions = jnp.arange(0, max_len)
         positions_padded = jnp.pad( positions, (0, self.args.sliding_window - len(positions)), constant_values=-1)
+        
+        
+        info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+        print("After the model is defined --Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total,\
+            info.total/(1024*1024), info.free/(1024*1024), info.used/(1024*1024)))
+
+
         return cache_k, cache_v, cos_freq, sin_freq, positions_padded
 
 
@@ -131,10 +152,11 @@ path="/vast/users/kraghavan/Mistral/"
 
 
 info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
-print("Before the model is defined -- Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, info.total, info.free, info.used))
+print("Before the model is defined -- Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle),\
+    100*info.free/info.total, info.total/(1024*1024), info.free/(1024*1024), info.used/(1024*1024)))
 
-Mistral = Mistral7B(path,key) #<---- Class
-mistral_model = Mistral.get_mistral_pretrained() #<---- Actual model weights!
+Mistral = Mistral7B(path,key) #<---- Class and laod model weights internally
+# Mistral.get_mistral_pretrained() #<---- Actual model weights!
 
 info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
 print("After the model is defined --Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total,\
@@ -153,7 +175,8 @@ yields = np.array(df['y'], dtype=jnp.float32)
 
 
 info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
-print("Before precompute -- Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, info.total, info.free, info.used))
+print("Before precompute -- Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle),\
+    100*info.free/info.total, info.total/(1024*1024), info.free/(1024*1024), info.used/(1024*1024)))
 
 cache_k, cache_v, cos_freq, sin_freq, positions_padded = Mistral._precompute(max_len)
 
@@ -215,14 +238,11 @@ def train_step(predictor, model, batch_rxns, batch_yields, cache_k, cache_v, cos
     
     return loss, predictor, opt_state
 
-
 # Step 3: Initialize optimizer
 optimizer = optax.adamw(learning_rate=1e-4)
 opt_state = optimizer.init(eqx.filter(predictor, eqx.is_array))  # optimizer.init(predictor)
-
 num_epochs = 2
-step = 1  
-
+step = 1 
 info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
 print("Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, info.total, info.free, info.used))
 
@@ -232,12 +252,18 @@ for epoch in range(num_epochs):
     running_loss = 0.0
     for batch_rxn, batch_yields in train_loader:
         # Perform a training step
-        loss, predictor, opt_state  = train_step( predictor, mistral_model,  batch_rxn, batch_yields, cache_k, cache_v, cos_freq, sin_freq, positions_padded, opt_state)
+        loss, predictor, opt_state  = train_step( predictor, Mistral.mistral_model,  batch_rxn, batch_yields, cache_k, cache_v, cos_freq, sin_freq, positions_padded, opt_state)
         
         loss = loss.item()
         print(f"step={epoch}, loss={loss}")
+        info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+        print("Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, info.total/(1024*1024*1024), info.free/(1024*1024*1024), info.used/(1024*1024*1024)))
+
         # Accumulate loss for monitoring
         running_loss += loss
        
     # Print epoch loss
     print(f"Epoch {epoch}, Loss: {running_loss / len(train_loader)}")
+    info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+    print("Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, info.total/(1024*1024*1024), info.free/(1024*1024*1024), info.used/(1024*1024*1024)))
+
