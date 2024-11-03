@@ -1,9 +1,8 @@
 import os
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']="False"
 # os.environ[]
-
 import jax
-# jax.config.update('jax_platform_name', 'cpu')
+jax.config.update('jax_platform_name', 'cpu')
 import jax.numpy as jnp
 import equinox as eqx
 import json
@@ -21,13 +20,18 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np 
 import optax
 import nvidia_smi
+
 nvidia_smi.nvmlInit()
 i = 0
 deviceCount = nvidia_smi.nvmlDeviceGetCount()
 handle = nvidia_smi.nvmlDeviceGetHandleByIndex(0)
 info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
-print("First -- Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total,\
-    info.total/(1024*1024), info.free/(1024*1024), info.used/(1024*1024)))
+print("First -- Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i,\
+        nvidia_smi.nvmlDeviceGetName(handle),\
+        100*info.free/info.total, \
+        info.total/(1024*1024), info.free/(1024*1024), \
+        info.used/(1024*1024)) \
+    )
     
     
 # Mistral-7B Model setting
@@ -251,14 +255,20 @@ print("Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".
 for epoch in range(num_epochs):
     running_loss = 0.0
     for batch_rxn, batch_yields in train_loader:
+        
+        # -----------------------------------------
         # Perform a training step
         loss, predictor, opt_state  = train_step( predictor, Mistral.mistral_model,  batch_rxn, batch_yields, cache_k, cache_v, cos_freq, sin_freq, positions_padded, opt_state)
         
+        
+        # -----------------------------------------
         loss = loss.item()
         print(f"step={epoch}, loss={loss}")
         info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
         print("Device {}: {}, Memory : ({:.2f}% free): {}(total), {} (free), {} (used)".format(i, nvidia_smi.nvmlDeviceGetName(handle), 100*info.free/info.total, info.total/(1024*1024*1024), info.free/(1024*1024*1024), info.used/(1024*1024*1024)))
 
+        
+        # -----------------------------------------
         # Accumulate loss for monitoring
         running_loss += loss
        
