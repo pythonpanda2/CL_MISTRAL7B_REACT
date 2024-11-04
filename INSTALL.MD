@@ -1,6 +1,6 @@
 ## INSTALLATION on ALCF SOPHIA/ POLARIS
 
-We will leverage the NVIDIA specific conda setup provided by ALCF. 
+We will leverage the [NVIDIA specific conda setup provided by ALCF](https://docs.alcf.anl.gov/polaris/data-science-workflows/frameworks/jax/). 
 
 ```
 module load conda; conda activate
