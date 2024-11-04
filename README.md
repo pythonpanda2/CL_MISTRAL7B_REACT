@@ -4,7 +4,7 @@ The Mistral-7B model weights needs to be ported to JAX/Equinox. This can be done
 
 
 ### Running the code
-Check out the scripts folder for bash run scripts.  We can run the standard fine tuning under three different settings. The first setting is to keep the Mistral 7B weights fixed and then only allow the MHA regression head to be fine tuned. 
+Check out the [scripts](https://github.com/pythonpanda2/CL_MISTRAL7B_REACT/tree/main/scripts) folder for bash run scripts.  We can run the standard fine tuning under three different settings. The first setting is to keep the Mistral 7B weights fixed and then only allow the MHA regression head to be fine tuned. 
 
 ```
 python -u  /path/CL_MISTRAL7B_REACT/CL_LLM_REACT/fine_tune_MHA_head.py -p /path/CL_MISTRAL7B_REACT/model_files \
