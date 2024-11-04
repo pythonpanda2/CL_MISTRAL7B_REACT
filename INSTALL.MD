@@ -1,6 +1,6 @@
 ## INSTALLATION on ALCF SOPHIA/ POLARIS
 
-We will leverage the JAX compiled for NVIDIA GPU support on ALCF. 
+We will leverage the NVIDIA specific conda setup provided by ALCF. 
 
 ```
 module load conda; conda activate
@@ -11,7 +11,7 @@ conda create --prefix=/path/MISTRAL_CL_CONDA  --clone base
 
 To activate this environment, use
 ```
-    $ conda activate path/MISTRAL_CL_CONDA
+    $ conda activate /path/MISTRAL_CL_CONDA
 ```
 
 To deactivate an active environment, use
