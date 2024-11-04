@@ -16,8 +16,7 @@ python -u  /path/CL_MISTRAL7B_REACT/CL_LLM_REACT/fine_tune_MHA_head.py -p /path/
 The second setting is to jointly fine tune Mistral 7B + MHA regression head.
 
 ```
-python -u  /path/CL_MISTRAL7B_REACT/CL_LLM_REACT/Jointly_fine_tune_Mistral7B_and_MHA_head.py \
- -p /path/CL_MISTRAL7B_REACT/model_files \
+python -u  /path/CL_MISTRAL7B_REACT/CL_LLM_REACT/Jointly_fine_tune_Mistral7B_and_MHA_head.py -p /path/CL_MISTRAL7B_REACT/model_files \
  -xl /path/CL_MISTRAL7B_REACT/data/Suzuki-Miyaura/aap9112_Data_File_S1.xlsx \
  -N 2 \
  -rs 1
