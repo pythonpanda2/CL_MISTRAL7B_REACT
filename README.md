@@ -13,7 +13,7 @@ python -u  /path/CL_MISTRAL7B_REACT/CL_LLM_REACT/fine_tune_MHA_head.py -p /path/
  -rs 1
 ```
 
-The second setting is to jointly fine tune Mistral 7B + MHA regression head. **Krishnan : This is what you should be running. The `submit.sh` takes care of this. I have increased the batch size to 32  inside the `MISTRAL7B_MHA_LOADER.py`.**
+The second setting is to jointly fine tune Mistral 7B + MHA regression head. **Krishnan : This is what you should be running. The `submit.sh` takes care of this. I have increased the batch size to 128  inside the `MISTRAL7B_MHA_LOADER.py`.**
 
 ```
 python -u  /path/CL_MISTRAL7B_REACT/CL_LLM_REACT/Jointly_fine_tune_Mistral7B_and_MHA_head.py -p /path/CL_MISTRAL7B_REACT/model_files \
