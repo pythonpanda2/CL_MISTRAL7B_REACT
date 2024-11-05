@@ -27,7 +27,7 @@ class ModelArgs(NamedTuple):
     vocab_size: int
     sliding_window: int
     norm_eps: float
-    max_batch_size: int = 4
+    max_batch_size: int = 32
 
 
 #Load the pre-trained Mistral model, tokenize inputs
