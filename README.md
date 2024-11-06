@@ -31,7 +31,7 @@ python -u  /path/CL_MISTRAL7B_REACT/CL_LLM_REACT/Jointly_fine_tune_Mistral7B_and
  -xl /path/CL_MISTRAL7B_REACT/data/Suzuki-Miyaura/aap9112_Data_File_S1.xlsx \
  -N 2  \ # Number of epochs
  -rs 1 \ # Seed
--r 32 \ # LoRA rank
--s 0.1 \ # LoRA scale : Typical value is 2 x rank
+-r 8 \ # LoRA rank
+-s 0.1 \ # LoRA scale : Typical value is 2 x rank. Kept low for now. 
 -lr 1e-5  #Learning rate
 ```
