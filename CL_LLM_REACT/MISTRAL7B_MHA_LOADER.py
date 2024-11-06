@@ -42,9 +42,7 @@ class Mistral7B:
             self.args = ModelArgs(**json.loads(f.read()))
         self.mistral_model = Transformer(self.args, key, dtype)
         self.mistral_model = eqx.tree_deserialise_leaves(self.mistral_pretrained_path , self.mistral_model)
-        #self.mistral_model = quax.lora.loraify(self.mistral_model, rank=8, key=key) 
-    #def get_mistral_pretrained(self):
-        #return eqx.tree_deserialise_leaves(self.mistral_pretrained_path , self.mistral_model)
+
 
     def tokenize_smiles(self, smiles):
         return self.sp.encode(smiles)
