@@ -14,7 +14,7 @@ from preprocess_Suzuki_Coupling_data import make_reaction
 from rope import precompute_frequencies
 import os
 from torch.utils.data import Dataset, DataLoader
-
+import quax
 
 # Mistral-7B Model setting
 class ModelArgs(NamedTuple):
@@ -27,7 +27,7 @@ class ModelArgs(NamedTuple):
     vocab_size: int
     sliding_window: int
     norm_eps: float
-    max_batch_size: int = 128
+    max_batch_size: int = 2
 
 
 #Load the pre-trained Mistral model, tokenize inputs
@@ -42,7 +42,7 @@ class Mistral7B:
             self.args = ModelArgs(**json.loads(f.read()))
         self.mistral_model = Transformer(self.args, key, dtype)
         self.mistral_model = eqx.tree_deserialise_leaves(self.mistral_pretrained_path , self.mistral_model)
-    
+        #self.mistral_model = quax.lora.loraify(self.mistral_model, rank=8, key=key) 
     #def get_mistral_pretrained(self):
         #return eqx.tree_deserialise_leaves(self.mistral_pretrained_path , self.mistral_model)
 
