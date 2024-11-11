@@ -156,11 +156,10 @@ def main():
     # model is defined 
     predictor = YieldPredictor(Mistral.mistral_model, num_heads, embed_dim,  setup_key, lora_rank, lora_scale)
     # break the model into trainable parameter and untrainable parameters
-    params, static = eqx.filter(predictor, eqx.is_array)
+    params, static = eqx.partition(predictor, eqx.is_array)
     print("\nSanity  Check: ", predictor.mha_head)
     print("",params, static)
     print("\n Detected Device: ",jax.devices())
-
     # Step 1: Fine-tune the model
     @eqx.filter_value_and_grad
     @eqx.filter_jit
