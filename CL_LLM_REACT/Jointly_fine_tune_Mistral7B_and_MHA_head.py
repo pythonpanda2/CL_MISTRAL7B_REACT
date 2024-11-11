@@ -35,6 +35,8 @@ def get_argparse():
                        help="Number of epochs to fine tune the MHA head",default=2)
     parser.add_argument('-rs','--randomseed',type=int,metavar='',\
             help="Initialize the random seed",default=0)
+    parser.add_argument('-lr','--learning_rate',type=float,metavar='',\
+            help="Optax learning rate",default=1e-5)
     return parser.parse_args()
 
 @eqx.filter_jit
@@ -66,12 +68,14 @@ def main():
 
     seed = args.randomseed
     np.random.seed(seed)
+    lr = args.learning_rate
     print("\nSet random seed :", seed )
     key=jax.random.key(seed)          # jax.random.PRNGKey(args.randomseed)
     model_key, mha_key, mha_dropout_key = jax.random.split(key, 3)
     #path="/eagle/FOUND4CHEM/project/CL_4_RXN/CL_MISTRAL7B_REACT/model_files"
     path = args.path
     Mistral = Mistral7B(path, model_key) #<---- Class
+   
 
     # Data Loading and Preprocessing
     #data_file  = "/eagle/FOUND4CHEM/project/CL_4_RXN/CL_MISTRAL7B_REACT/data/Suzuki-Miyaura/aap9112_Data_File_S1.xlsx"
@@ -93,9 +97,9 @@ def main():
     #print(train_rxn.shape, type(train_rxn),  val_rxn.shape,  type(val_rxn) )
     # Convert JAX arrays to PyTorch tensors
     train_rxns_torch = torch.tensor(train_rxn)
-    train_yields_torch = torch.tensor(train_yields, dtype=torch.float32)
+    train_yields_torch = torch.tensor(train_yields, dtype=torch.float32) #float32
     val_rxns_torch = torch.tensor(val_rxn)
-    val_yields_torch = torch.tensor(val_yields, dtype=torch.float32)
+    val_yields_torch = torch.tensor(val_yields, dtype=torch.float32) #float32
 
     # Create dataset objects for training and validation
     train_dataset = ReactionDataset(train_rxns_torch, train_yields_torch)
@@ -124,11 +128,11 @@ def main():
             #remat_model = jax.remat(self.model)
             # Apply remat to each Transformer layer in the Mistral model
             remat_model = jax.remat(self.model)
-            vmap_model = eqx.filter_vmap(remat_model, in_axes= (0, None, None, None, None, 0, 0)) # jax.vmap --> eqx.filter_vmap
+            vmap_model = jax.vmap(remat_model, in_axes= (0, None, None, None, None, 0, 0)) # jax.vmap --> eqx.filter_vmap
             embeddings, _, _ = vmap_model(batch_rxns, cos_freq, sin_freq, positions_padded, None, cache_k, cache_v)
             # Cast embeddings back to float32 for the predictor
-            embeddings = embeddings.astype(jnp.float32)
-            yield_prediction = eqx.filter_vmap(lambda emb: self.mha_head(emb, key, is_training))(embeddings) # jax.vmap --> eqx.filter_vmap
+            #embeddings = embeddings.astype(jnp.float32)
+            yield_prediction = jax.vmap(lambda emb: self.mha_head(emb, key, is_training))(embeddings) # jax.vmap --> eqx.filter_vmap
             return yield_prediction
 
     predictor = YieldPredictor(Mistral.mistral_model, num_heads, embed_dim,  mha_key)
@@ -137,10 +141,11 @@ def main():
 
     # Step 1: Fine-tune the model
     @eqx.filter_value_and_grad
+    @eqx.filter_jit
     def loss_fn(predictor,  batch_rxns, batch_yields,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key ):
 
-        batch_rxns = jnp.array(batch_rxns.numpy())
-        batch_yields = jnp.array(batch_yields.numpy())
+        #batch_rxns = jnp.array(batch_rxns.numpy())
+        #batch_yields = jnp.array(batch_yields.numpy())
 
         # Pass is_training=True during training
         predictions = predictor(batch_rxns,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key, True)
@@ -161,23 +166,26 @@ def main():
         return loss, predictor, opt_state
 
     # Step 3: Initialize optimizer
-    optimizer = optax.adafactor(learning_rate=1e-5)
+    print("\n Setting up optimizer with a learning rate = ", lr)
+    optimizer = optax.adafactor(learning_rate=lr)
     opt_state = optimizer.init(eqx.filter(predictor, eqx.is_array))  # optimizer.init(predictor)
     
     # Step 4: Run Fine tuning / training
     num_epochs = args.epoch
+    print("\n Total number of training epochs : ", num_epochs )
     print("\n Total number of train  batches : ",len(train_loader))
     # Training Loop with DataLoader
     for epoch in range(num_epochs):
         running_loss = 0.0
         step = 1 
-        for batch_rxn, batch_yields in train_loader:
-
+        for batch_rxns, batch_yields in train_loader:
+            batch_rxns = jnp.array(batch_rxns.numpy())
+            batch_yields = jnp.array(batch_yields.numpy(),dtype=jnp.bfloat16)
             # Reset KV cache for each batch to ensure it's not reused across different batches
             cos_freq, sin_freq, positions_padded, cache_k, cache_v = Mistral._precompute(max_len)
 
             # Perform a training step
-            loss, predictor, opt_state  = train_step( predictor,  batch_rxn, batch_yields, cos_freq, sin_freq, positions_padded, cache_k, cache_v, mha_dropout_key, opt_state)
+            loss, predictor, opt_state  = train_step( predictor,  batch_rxns, batch_yields, cos_freq, sin_freq, positions_padded, cache_k, cache_v, mha_dropout_key, opt_state)
         
             loss = loss.item()
             print(f"step={step}, loss={loss}")
@@ -198,7 +206,7 @@ def main():
     step = 1
     for val_rxns, val_yields in val_loader:
         val_rxns = jnp.array(val_rxns.numpy())
-        val_yields = jnp.array(val_yields.numpy())
+        val_yields = jnp.array(val_yields.numpy(),dtype=jnp.bfloat16)
 
         # Reset KV cache for each batch to ensure it's not reused across different batches
         cos_freq, sin_freq, positions_padded, cache_k, cache_v = Mistral._precompute(max_len)
@@ -216,14 +224,14 @@ def main():
 
         # Calculate R² score
         #r2 = r2_score( np.asarray(val_yields), np.asarray( predictions[:, -1, 0]  ) ) # Use just the last dim of pred
-        r2_alt = r2_score( np.asarray(val_yields), np.asarray( jnp.mean(predictions, axis=1).squeeze()  ) )
+        r2_alt = r2_score( np.asarray(val_yields,  dtype=np.float32), np.asarray( jnp.mean(predictions, axis=1).squeeze(), dtype=np.float32  ) )
         print("Step , MAE Loss, R2 value for current batch :", step, val_loss, r2_alt)
         running_r2_score += r2_alt
         step += 1
 
     # Flatten collected lists to get overall predictions and true labels
-    all_predictions = np.concatenate(all_predictions, axis=0)
-    all_true_labels = np.concatenate(all_true_labels, axis=0)
+    all_predictions = np.concatenate(all_predictions, axis=0, dtype=np.float32)
+    all_true_labels = np.concatenate(all_true_labels, axis=0, dtype=np.float32)
 
     # Save true labels and predictions to a .npy file for future use
     np.save("val_true_labels.npy", np.asarray(all_true_labels))

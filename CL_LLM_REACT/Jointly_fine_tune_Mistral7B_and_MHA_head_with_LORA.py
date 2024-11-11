@@ -1,8 +1,9 @@
 """
 @author: pythonpanda2 (aka Ganesh Sivaraman)
 """ 
-from MISTRAL7B_MHA_LOADER import Mistral7B, MultiHeadAttentionRegression, ModelArgs, ReactionDataset    
+from MISTRAL7B_MHA_LOADER import * 
 import argparse 
+import functools as ft
 import jax
 import jax.numpy as jnp
 import equinox as eqx
@@ -41,6 +42,8 @@ def get_argparse():
             help="LoRA Scale: [1.] scaling = alpha / r [2.] weight += (lora_B @ lora_A) * scaling",default=0.01)
     parser.add_argument('-lr','--learning_rate',type=float,metavar='',\
             help="Optax learning rate",default=1e-5)
+    #parser.add_argument('-si','--simple',type=str,metavar='',\
+            #help="Sepecify simple MHA head : yes or no",default='no')
     return parser.parse_args()
 
 @eqx.filter_jit
@@ -120,7 +123,6 @@ def main():
     # Initialize the regression block
     embed_dim = 4096  # Assuming embedding dimension of Mistral
     num_heads = 4  # Number of  attention head for regression task
-    
     print(f"\n Setting up LoRA with a rank of {lora_rank}, and scale of {lora_scale}")
 
     #Combine the Mistral-7B +  MHA head in to a  unifed model class for fine tuning. 
@@ -131,32 +133,35 @@ def main():
         def __init__(self, model, num_heads, embed_dim, setup_key, lora_rank, lora_scale):
             lora_key, mha_key = jax.random.split(setup_key, 2)
             self.model =  quax.lora.loraify(model, rank=lora_rank, scale=lora_scale, key=lora_key)
-            self.mha_head = MultiHeadAttentionRegression(num_heads, embed_dim,  mha_key)
-
+            #self.mha_head = MultiHeadAttentionRegression(num_heads, embed_dim,  mha_key)
+            self.mha_head = SimpleMultiHeadAttentionRegression(num_heads, embed_dim,  mha_key)
+            #self.mha_head = SimpleNonLinearRegression(embed_dim,  mha_key)
+            #self.mha_head = AttentionPooling(embed_dim,  mha_key)
 
         def __call__(self,  batch_rxns,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key, is_training):
             quaxified_model = quax.quaxify(self.model)
-            remat_model = jax.remat(quaxified_model)
-            vmap_model = eqx.filter_vmap(remat_model, in_axes= (0, None, None, None, None, 0, 0))
+            remat_model = jax.remat(quaxified_model) 
+
+            vmap_model = jax.vmap(remat_model, in_axes= (0, None, None, None, None, 0, 0))
             embeddings, _, _ = vmap_model(batch_rxns, cos_freq, sin_freq, positions_padded, None, cache_k, cache_v)
 
             # Cast embeddings back to float32 for the predictor
-            embeddings = embeddings.astype(jnp.float32)
-
+            #embeddings = embeddings.astype(jnp.float32)
+            print(embeddings.shape)
             # Pass the embeddings through the regression head
-            yield_prediction = eqx.filter_vmap(lambda emb: self.mha_head(emb, dropout_key, is_training))(embeddings) # jax.vmap --> eqx.filter_vmap
+            yield_prediction = jax.vmap(lambda emb: self.mha_head(emb, dropout_key, is_training))(embeddings) # jax.vmap --> eqx.filter_vmap
             return yield_prediction
 
     predictor = YieldPredictor(Mistral.mistral_model, num_heads, embed_dim,  setup_key, lora_rank, lora_scale)
-
+    Params, static = eqx.filter(predicted, eqx.is_array)
+    print("\nSanity  Check: ",predictor.mha_head)
+    print("",predictor.params)
     print("\n Detected Device: ",jax.devices())
 
     # Step 1: Fine-tune the model
     @eqx.filter_value_and_grad
+    @eqx.filter_jit
     def loss_fn(predictor,  batch_rxns, batch_yields,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key ):
-
-        batch_rxns = jnp.array(batch_rxns.numpy())
-        batch_yields = jnp.array(batch_yields.numpy())
 
         # Pass is_training=True during training
         predictions = predictor(batch_rxns,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key, True)
@@ -178,7 +183,7 @@ def main():
 
     # Step 3: Initialize optimizer
     print("\n Setting up optimizer with a learning rate = ", lr)
-    optimizer = optax.adafactor(learning_rate=lr)
+    optimizer = optax.lion(learning_rate=lr) #adafactor
     opt_state = optimizer.init(eqx.filter(predictor, eqx.is_array))  # optimizer.init(predictor)
     
     # Step 4: Run Fine tuning / training
@@ -188,13 +193,14 @@ def main():
     for epoch in range(num_epochs):
         running_loss = 0.0
         step = 1 
-        for batch_rxn, batch_yields in train_loader:
-
+        for batch_rxns, batch_yields in train_loader:
+            batch_rxns = jnp.array(batch_rxns.numpy())
+            batch_yields = jnp.array(batch_yields.numpy(),  dtype=jnp.bfloat16)
             # Reset KV cache for each batch to ensure it's not reused across different batches
             cos_freq, sin_freq, positions_padded, cache_k, cache_v = Mistral._precompute(max_len)
 
             # Perform a training step
-            loss, predictor, opt_state  = train_step( predictor,  batch_rxn, batch_yields, cos_freq, sin_freq, positions_padded, cache_k, cache_v, mha_dropout_key, opt_state)
+            loss, predictor, opt_state  = train_step( predictor,  batch_rxns, batch_yields, cos_freq, sin_freq, positions_padded, cache_k, cache_v, mha_dropout_key, opt_state)
         
             loss = loss.item()
             print(f"step={step}, loss={loss}")
@@ -215,7 +221,7 @@ def main():
     step = 1
     for val_rxns, val_yields in val_loader:
         val_rxns = jnp.array(val_rxns.numpy())
-        val_yields = jnp.array(val_yields.numpy())
+        val_yields = jnp.array(val_yields.numpy(), dtype=jnp.bfloat16)
 
         # Reset KV cache for each batch to ensure it's not reused across different batches
         cos_freq, sin_freq, positions_padded, cache_k, cache_v = Mistral._precompute(max_len)
@@ -233,14 +239,14 @@ def main():
 
         # Calculate R² score
         #r2 = r2_score( np.asarray(val_yields), np.asarray( predictions[:, -1, 0]  ) ) # Use just the last dim of pred
-        r2_alt = r2_score( np.asarray(val_yields), np.asarray( jnp.mean(predictions, axis=1).squeeze()  ) )
-        print("Step , MAE Loss, R2 value for current batch :", step, val_loss, r2_alt)
-        running_r2_score += r2_alt
+        #r2_alt = r2_score( np.asarray(val_yields, dtype=np.float32), np.asarray( jnp.mean(predictions, axis=1).squeeze(),  dtype=np.float32  ) )
+        #print("Step , MAE Loss, R2 value for current batch :", step, val_loss, r2_alt)
+        #running_r2_score += r2_alt
         step += 1
 
     # Flatten collected lists to get overall predictions and true labels
-    all_predictions = np.concatenate(all_predictions, axis=0)
-    all_true_labels = np.concatenate(all_true_labels, axis=0)
+    all_predictions = np.concatenate(all_predictions, axis=0,  dtype=np.float32)
+    all_true_labels = np.concatenate(all_true_labels, axis=0,  dtype=np.float32)
 
     # Save true labels and predictions to a .npy file for future use
     np.save("val_true_labels.npy", np.asarray(all_true_labels))
@@ -256,10 +262,10 @@ def main():
     print(f"Validation RMSE: {rmse}")
     print(f"Validation R² Score: {r2}")
 
-    val_loss, r2_val=  running_val_loss / len(val_loader),  running_r2_score / len(val_loader)
+    #val_loss, r2_val=  running_val_loss / len(val_loader),  running_r2_score / len(val_loader)
 
-    print(f"[Double Check!]Validation Loss: {val_loss}")
-    print(f"[Double Check!] Validation R2: {r2_val}")
+    #print(f"[Double Check!]Validation Loss: {val_loss}")
+    #print(f"[Double Check!] Validation R2: {r2_val}")
 
 
 # Standard boilerplate to call the main() function to begin
