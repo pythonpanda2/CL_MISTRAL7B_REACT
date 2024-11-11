@@ -152,39 +152,39 @@ def main():
             yield_prediction = jax.vmap(lambda emb: self.mha_head(emb, dropout_key, is_training))(embeddings) # jax.vmap --> eqx.filter_vmap
             return yield_prediction
 
+    
+    # model is defined 
     predictor = YieldPredictor(Mistral.mistral_model, num_heads, embed_dim,  setup_key, lora_rank, lora_scale)
-    Params, static = eqx.filter(predicted, eqx.is_array)
-    print("\nSanity  Check: ",predictor.mha_head)
-    print("",predictor.params)
+    # break the model into trainable parameter and untrainable parameters
+    params, static = eqx.filter(predictor, eqx.is_array)
+    print("\nSanity  Check: ", predictor.mha_head)
+    print("",params, static)
     print("\n Detected Device: ",jax.devices())
 
     # Step 1: Fine-tune the model
     @eqx.filter_value_and_grad
     @eqx.filter_jit
-    def loss_fn(predictor,  batch_rxns, batch_yields,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key ):
-
+    def loss_fn(params, static,  batch_rxns, batch_yields,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key )
         # Pass is_training=True during training
+        predictor = eqx.combine(params, static)
         predictions = predictor(batch_rxns,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key, True)
-
         loss = jnp.mean((predictions - batch_yields) ** 2)
-
         return loss
 
     #Step 2 : Training step
     @eqx.filter_jit
-    def train_step(predictor,  batch_rxns, batch_yields, cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key, opt_state):
+    def train_step(params, static,  batch_rxns, batch_yields, cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key, opt_state):
         # Get loss and gradients
-        loss, grads = loss_fn(predictor, batch_rxns, batch_yields,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key)
+        loss, grads = loss_fn(params, static, batch_rxns, batch_yields,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key)
         # Update the parameters using the optimizer
-        updates, opt_state = optimizer.update(grads, opt_state, eqx.filter(predictor, eqx.is_array) )
-        predictor = eqx.apply_updates(predictor, updates)
-
-        return loss, predictor, opt_state
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        params = eqx.apply_updates(params, updates)
+        return loss, params, opt_state
 
     # Step 3: Initialize optimizer
     print("\n Setting up optimizer with a learning rate = ", lr)
     optimizer = optax.lion(learning_rate=lr) #adafactor
-    opt_state = optimizer.init(eqx.filter(predictor, eqx.is_array))  # optimizer.init(predictor)
+    opt_state = optimizer.init(params)  # optimizer.init(predictor)
     
     # Step 4: Run Fine tuning / training
     print("\n Total number of training epochs : ", num_epochs )
@@ -200,7 +200,7 @@ def main():
             cos_freq, sin_freq, positions_padded, cache_k, cache_v = Mistral._precompute(max_len)
 
             # Perform a training step
-            loss, predictor, opt_state  = train_step( predictor,  batch_rxns, batch_yields, cos_freq, sin_freq, positions_padded, cache_k, cache_v, mha_dropout_key, opt_state)
+            loss, params, opt_state  = train_step( params, static, batch_rxns, batch_yields, cos_freq, sin_freq, positions_padded, cache_k, cache_v, mha_dropout_key, opt_state)
         
             loss = loss.item()
             print(f"step={step}, loss={loss}")
