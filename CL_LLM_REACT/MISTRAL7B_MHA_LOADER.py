@@ -151,10 +151,13 @@ class MultiHeadAttentionRegression(eqx.Module):
         x = jax.vmap(self.rmsnorm4)(x)
         x = jax.nn.silu(x)
 
-        return jax.vmap(self.output_layer)(x)  # Output a scalar value
+        x = x.mean(axis=0) # Apply mean pooling to sequence length
+        x = self.output_layer(x)
+
+        return  jax.nn.sigmoid(x)  # Output a scalar value
 
 
-# Define the regression block with a Multi-head attention layer
+# Define the regression block with a  Multi-head attention layer with a simplied read out!
 class SimpleMultiHeadAttentionRegression(eqx.Module):
     rope_embeddings: eqx.nn.RotaryPositionalEmbedding
     mha: eqx.nn.MultiheadAttention
@@ -169,29 +172,30 @@ class SimpleMultiHeadAttentionRegression(eqx.Module):
     attention_weights: eqx.nn.Linear 
     output_layer: eqx.nn.Linear
 
-    def __init__(self, num_heads, embed_dim, key, dtype=jnp.bfloat16):
+    def __init__(self, num_heads, embed_dim, key, dtype=jnp.float32):
 
         assert embed_dim > 0, "embed_dim must be a positive integer"
         
         # Split key for reproducibility
         subkey_mha, subkey_ffn,  subkey_linear1, subkey_attention, subkey_output = jax.random.split(key, 5)
         
-        self.rope_embeddings = eqx.nn.RotaryPositionalEmbedding(embedding_size=embed_dim // num_heads, dtype=jnp.float32)
-        self.mha = eqx.nn.MultiheadAttention(num_heads=num_heads, query_size=embed_dim, dtype=jnp.float32,  key=subkey_mha)
+        self.rope_embeddings = eqx.nn.RotaryPositionalEmbedding(embedding_size=embed_dim // num_heads, dtype=dtype)
+        self.mha = eqx.nn.MultiheadAttention(num_heads=num_heads, query_size=embed_dim, dtype=dtype,  key=subkey_mha)
         self.ffn = eqx.nn.MLP(
             embed_dim,
             out_size=embed_dim,
             width_size= embed_dim,
             depth=2,
             activation = jax.nn.silu,
+            dtype=dtype,
             key=subkey_ffn,
         )
         self.rmsnorm1 = eqx.nn.RMSNorm(shape=embed_dim,  dtype=jnp.float32) #RMSNorm in  eqx needs higher precision!
         self.rmsnorm2 = eqx.nn.RMSNorm(shape=embed_dim,  dtype=jnp.float32) 
         self.dropout = eqx.nn.Dropout(p=0.2)
+        self.attention_weights = eqx.nn.Linear(embed_dim, 1, key=subkey_attention, dtype=dtype)
         self.linear1 = eqx.nn.Linear(embed_dim, 1024, key=subkey_linear1, dtype=dtype)
         self.rmsnorm3 = eqx.nn.RMSNorm(shape=1024,  dtype=jnp.float32)
-        self.attention_weights = eqx.nn.Linear(1024, 1, key=subkey_attention, dtype=dtype)
         #self.linear2 = eqx.nn.Linear(1024, 256, key=subkey_linear2, dtype=dtype)
         #self.rmsnorm4 = eqx.nn.RMSNorm(shape=256,  dtype=jnp.float32)
         self.output_layer = eqx.nn.Linear(1024, 1, key=subkey_output,  dtype=dtype)
@@ -238,66 +242,34 @@ class SimpleMultiHeadAttentionRegression(eqx.Module):
         x = jax.vmap(self.rmsnorm2)(x)  #Layer norm
 
         #(Optional : Drop out after-->) Linear-->  BatchNorm-->  Swish blocks
-        x = jax.vmap(self.linear1)(x) 
-        if is_training:
-            x = self.dropout(x, key=subkey_dropout2)
-        x = jax.vmap(self.rmsnorm3)(x)
-        x = jax.vmap(jax.nn.silu)(x)
-        print(x.shape)
-        # **Aggregate over the sequence dimension**
+        #x = jax.vmap(self.linear1)(x) 
+        #if is_training:
+        #    x = self.dropout(x, key=subkey_dropout2)
+        #x = jax.vmap(self.rmsnorm3)(x)
+        #x = jax.vmap(jax.nn.silu)(x)
+        #print("Shape after MHA", x.shape)
+
+        # **Aggregate over the sequence length dimension**
         #x_pooled = x.mean(axis=0)  # Shape: (seq_len, embedding dim)
+        
+        # **Aggregate over the sequence length dimension using Attention pooling**
         attn_scores = jax.vmap(self.attention_weights)(x)
-        print(attn_scores.shape, attn_scores.squeeze(-1).shape)
+        #print(attn_scores.shape, attn_scores.squeeze(-1).shape)
         attn_scores = attn_scores.squeeze(-1)  
         attn_weights = jax.nn.softmax(attn_scores, axis=-1)
-        print(attn_weights.shape)
+        #print(attn_weights.shape)
         x_pooled = jnp.einsum('sl,s->l', x, attn_weights)
-        print(x_pooled.shape)
-        #x = jax.vmap(self.linear2)(x) 
-        #if is_training:
-        #    x = self.dropout(x, key=subkey_dropout3)
-        #x = jax.vmap(self.rmsnorm4)(x)
-        #x = jax.nn.silu(x)
-
-        return self.output_layer(x_pooled)  # Output a scalar value
-
-
-# Define the regression block with a Multi-head attention layer
-class SimpleNonLinearRegression(eqx.Module):
-    rmsnorm1: eqx.nn.RMSNorm
-    dropout: eqx.nn.Dropout
-    linear1: eqx.nn.Linear
-    output_layer: eqx.nn.Linear
-
-    def __init__(self,  embed_dim, key, dtype=jnp.bfloat16):
-
-        assert embed_dim > 0, "embed_dim must be a positive integer"
         
-        # Split key for reproducibility
-        subkey_linear1,  subkey_output = jax.random.split(key, 2)
-        
-        self.rmsnorm1 = eqx.nn.RMSNorm(shape=1024,  dtype=jnp.float32) #RMSNorm in  eqx needs higher precision!
-        self.dropout = eqx.nn.Dropout(p=0.2)
-        self.linear1 = eqx.nn.Linear(embed_dim, 1024, key=subkey_linear1, dtype=dtype)
-        self.output_layer = eqx.nn.Linear(1024, 1, key=subkey_output,  dtype=dtype)
-
-    def __call__(self, x, key=None, is_training=True):
-        #x = mistral(x)
-        
+        #print(x_pooled.shape)
+        x = self.linear1(x_pooled) 
         if is_training:
-            if key is None:
-                raise ValueError("Dropout requires a key when running in training mode.")
-            # Split key to use different keys for different dropout calls
-            subkey_dropout1, subkey_dropout2 = jax.random.split(key, 2)
-
-        #(Optional : Drop out after-->) Linear-->  BatchNorm-->  Swish blocks
-        x = jax.vmap(self.linear1)(x) 
-        if is_training:
-            x = self.dropout(x, key=subkey_dropout2)
-        x = jax.vmap(self.rmsnorm1)(x)
+            x = self.dropout(x, key=subkey_dropout3)
+        x = self.rmsnorm3(x)
         x = jax.nn.silu(x)
+        x = self.output_layer(x)
 
-        return jax.vmap(self.output_layer)(x)  # Output a scalar value
+        return jax.nn.sigmoid(x)  # Output a positive scalar value
+
 
 
 

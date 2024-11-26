@@ -12,11 +12,12 @@ import json
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_squared_error
 import matplotlib.pyplot as plt
-from preprocess_Suzuki_Coupling_data import make_reaction
+from preprocess_Suzuki_Coupling_data import create_task_aware_reaction_df, task_aware_splits 
 import os
 import torch
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
+import pandas as pd 
 import optax
 import quax
 
@@ -92,33 +93,33 @@ def main():
     # Data Loading and Preprocessing
     #data_file  = "/eagle/FOUND4CHEM/project/CL_4_RXN/CL_MISTRAL7B_REACT/data/Suzuki-Miyaura/aap9112_Data_File_S1.xlsx"
     data_file = args.xlsfile
-    df = make_reaction(data_file) #df[['rxn', 'y']]
+    task_aware_reactions_df  = create_task_aware_reaction_df(data_file) #df[['rxn', 'y']]
+    #task_aware_reactions_df = task_aware_splits(df)
     #tokenized_smiles, yields, max_len = preprocess_data(df)
 
-    tokenized_rxn = [Mistral.tokenize_smiles(smiles) for smiles in df['rxn']]
+    tokenized_rxn = [Mistral.tokenize_smiles(smiles) for smiles in task_aware_reactions_df['rxn']]
     max_len =     max(len(sublist) for sublist in tokenized_rxn) #len(tokenized_rxn[0])
-    padded_rxn = [sublist + [0] * (max_len - len(sublist)) for sublist in tokenized_rxn]
-    tokenized_padded_inp_array = np.stack([np.array(aa) for aa in padded_rxn]) # jnp.array(padded_a)
-    yields = np.array(df['y'], dtype=np.float32)
-
-    #cache_k, cache_v, cos_freq, sin_freq, positions_padded = Mistral._precompute(max_len)
-
+    print(f"\n Sequence length: {max_len}")
+    del tokenized_rxn # We dont need this after the max_len is estimated!
+    
     # 70/30 split
-    train_rxn, val_rxn, train_yields, val_yields = train_test_split( tokenized_padded_inp_array, yields, test_size=0.3, random_state=seed)
-
-    #print(train_rxn.shape, type(train_rxn),  val_rxn.shape,  type(val_rxn) )
+    train_df, test_df = train_test_split(task_aware_reactions_df, test_size=0.3, random_state=seed)
+    tokenize_test_rxn = [Mistral.tokenize_smiles(smiles) for smiles in test_df['rxn']]
+    padded_test_rxn = [sublist + [0] * (max_len - len(sublist)) for sublist in tokenize_test_rxn]
+    val_rxn =  np.stack([np.array(aa) for aa in padded_test_rxn])
+    val_yields = np.array(test_df['y'], dtype=np.float32)
     # Convert JAX arrays to PyTorch tensors
-    train_rxns_torch = torch.tensor(train_rxn)
-    train_yields_torch = torch.tensor(train_yields, dtype=torch.float32)
+    #train_rxns_torch = torch.tensor(train_rxn)
+    #train_yields_torch = torch.tensor(train_yields, dtype=torch.float32)
     val_rxns_torch = torch.tensor(val_rxn)
     val_yields_torch = torch.tensor(val_yields, dtype=torch.float32)
 
     # Create dataset objects for training and validation
-    train_dataset = ReactionDataset(train_rxns_torch, train_yields_torch)
+    #train_dataset = ReactionDataset(train_rxns_torch, train_yields_torch)
     val_dataset = ReactionDataset(val_rxns_torch, val_yields_torch)
 
     print("\n Batch size:",Mistral.args.max_batch_size)
-    train_loader = DataLoader(train_dataset, batch_size=Mistral.args.max_batch_size, shuffle=True)
+    #train_loader = DataLoader(train_dataset, batch_size=Mistral.args.max_batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=Mistral.args.max_batch_size, shuffle=True)
 
     # Initialize the regression block
@@ -134,13 +135,12 @@ def main():
 
         def __init__(self, model, num_heads, embed_dim, setup_key, lora_rank, lora_scale):
             lora_key, mha_key = jax.random.split(setup_key, 2)
-            self.model = model #  quax.lora.loraify(model, rank=lora_rank, scale=lora_scale, key=lora_key)
-            #self.mha_head = MultiHeadAttentionRegression(num_heads, embed_dim,  mha_key)
+            self.model =  quax.lora.loraify(model, rank=lora_rank, scale=lora_scale, key=lora_key)
             self.mha_head = SimpleMultiHeadAttentionRegression(num_heads, embed_dim,  mha_key)
 
         def __call__(self,  batch_rxns,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key, is_training):
-            #quaxified_model = quax.quaxify(self.model)
-            remat_model = jax.remat(self.model) 
+            quaxified_model = quax.quaxify(self.model)
+            remat_model = jax.remat(quaxified_model) 
 
             vmap_model = jax.vmap(remat_model, in_axes= (0, None, None, None, None, 0, 0))
             embeddings, _, _ = vmap_model(batch_rxns, cos_freq, sin_freq, positions_padded, None, cache_k, cache_v)
@@ -154,25 +154,31 @@ def main():
     predictor = YieldPredictor(Mistral.mistral_model, num_heads, embed_dim,  setup_key, lora_rank, lora_scale)
     # break the model into trainable parameter and untrainable parameters
     params, static = eqx.partition(predictor, eqx.is_array)
-    print("\nSanity  Check: ", predictor.mha_head)
+    #print("\nSanity  Check: ", predictor.model)
     print("\n Detected Device: ",jax.devices())
     
     # Step 1: Fine-tune the model
     @eqx.filter_value_and_grad
     @eqx.filter_jit
-    def loss_fn(params, static,  batch_rxns, batch_yields,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key ) : 
+    def loss_fn(params, static,  batch_rxns, batch_yields, mask,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key ) : 
         # Pass is_training=True during training
         predictor = eqx.combine(params, static)
         predictions = predictor(batch_rxns,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key, True)
         #loss = jnp.mean((predictions - batch_yields) ** 2)
-        loss = jnp.mean( optax.losses.l2_loss(predictions.squeeze(), batch_yields) )
+        loss = jnp.mean( optax.losses.l2_loss(predictions.squeeze(), batch_yields) ) 
+
+        loss = loss * mask  # Zero out losses for padded samples
+    
+        # Compute mean loss over real samples
+        loss = jnp.sum(loss) / jnp.sum(mask)
+
         return loss
 
     #Step 2 : Training step
     @eqx.filter_jit
-    def train_step(params, static,  batch_rxns, batch_yields, cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key, opt_state):
+    def train_step(params, static,  batch_rxns, batch_yields, mask, cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key, opt_state):
         # Get loss and gradients
-        loss, grads = loss_fn(params, static, batch_rxns, batch_yields,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key)
+        loss, grads = loss_fn(params, static, batch_rxns, batch_yields, mask,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key)
         # Update the parameters using the optimizer
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = eqx.apply_updates(params, updates)
@@ -184,35 +190,101 @@ def main():
     opt_state = optimizer.init(params)  # optimizer.init(predictor)
     
     # Step 4: Run Fine tuning / training
-    print("\n Total number of training epochs : ", num_epochs )
-    print("\n Total number of train  batches : ",len(train_loader))
-    # Training Loop with DataLoader
-    for epoch in range(num_epochs):
-        running_loss = 0.0
-        step = 1 
-        for batch_rxns, batch_yields in train_loader:
-            batch_rxns = jnp.array(batch_rxns.numpy())
-            batch_yields = jnp.array(batch_yields.numpy(),  dtype=jnp.float32)
-            # Reset KV cache for each batch to ensure it's not reused across different batches
-            cos_freq, sin_freq, positions_padded, cache_k, cache_v = Mistral._precompute(max_len)
-            #flat_x, unravel = ravel_pytree(params)
-            #print("\nBefore, Params first", flat_x[0] ) 
-            # Perform a training step
-            loss, params, opt_state  = train_step( params, static, batch_rxns, batch_yields, cos_freq, sin_freq, positions_padded, cache_k, cache_v, mha_dropout_key, opt_state)
-            
-            #flat_x, unravel = ravel_pytree(params)
-            #print("\nAfter, Params first", flat_x[0] )
-            #exit()
-            loss = loss.item()
-            #print(f"step={step}, loss={loss}")
-            # Accumulate loss for monitoring
-            running_loss += loss
-            if step % 20 == 0 :
-                print(f"step: {step}, Running loss: {np.round(running_loss/ step, 6)}" )
-            step += 1 
-        # Print epoch loss
-        print(f"Epoch {epoch}, Loss: {np.round(running_loss / len(train_loader),6 )}")
+    def pad_collate_fn(batch):
+        """ Pad the batches for fixed size!"""
+        batch_rxns, batch_yields = zip(*batch)
+        batch_size = len(batch_rxns)
+        max_batch_size = Mistral.args.max_batch_size  # Fixed batch size (e.g., 12)
+    
+        # Stack the batch data
+        batch_rxns = torch.stack(batch_rxns)  # Shape: (batch_size, seq_length)
+        batch_yields = torch.tensor(batch_yields)  # Shape: (batch_size,)
+    
+        # Create a mask for real samples
+        mask = torch.ones(batch_size, dtype=torch.bool)
+    
+        if batch_size < max_batch_size:
+            # Calculate the number of padding samples needed
+            num_padding = max_batch_size - batch_size
+        
+            # Create padding for reactions and yields
+            padding_rxn = torch.zeros((num_padding, batch_rxns.shape[1]), dtype=batch_rxns.dtype)
+            padding_yield = torch.zeros(num_padding, dtype=batch_yields.dtype)
+        
+            # Concatenate padding to the batch data
+            batch_rxns = torch.cat([batch_rxns, padding_rxn], dim=0)  # Shape: (max_batch_size, seq_length)
+            batch_yields = torch.cat([batch_yields, padding_yield], dim=0)  # Shape: (max_batch_size,)
+        
+            # Extend the mask with False for padded samples
+            mask = torch.cat([mask, torch.zeros(num_padding, dtype=torch.bool)], dim=0)  # Shape: (max_batch_size,)
+    
+        return batch_rxns, batch_yields, mask
 
+
+    print("\n Total number of training epochs : ", num_epochs )
+    task_grouped_train = task_aware_splits(train_df)
+    print("\n Total number of training task groups : ",len(task_grouped_train))
+
+    # Training Loop with DataLoader
+    task_losses = []  # List to store average loss per task
+    for i, key in enumerate(task_grouped_train.keys() ) :
+        epoch_losses = []  # List to store epoch losses for this task
+        for epoch in range(num_epochs):
+            
+            task_df = pd.DataFrame(task_grouped_train[key])
+            print(f"Task {i+1}: {key}, Samples Size: {task_df.shape[0]}")
+            tokenize_task_rxn = [Mistral.tokenize_smiles(smiles) for smiles in task_df['rxn']]
+            padded_task_rxn = [sublist + [0] * (max_len - len(sublist)) for sublist in tokenize_task_rxn]
+            train_rxn =  np.stack([np.array(aa) for aa in padded_task_rxn ])
+            train_yields = np.array(task_df['y'], dtype=np.float32)
+
+            train_rxns_torch = torch.tensor(train_rxn)
+            train_yields_torch = torch.tensor(train_yields, dtype=torch.float32)
+            train_dataset = ReactionDataset(train_rxns_torch, train_yields_torch)
+            train_loader = DataLoader(train_dataset, batch_size=Mistral.args.max_batch_size, shuffle=True, collate_fn=pad_collate_fn)
+            step = 1 
+            running_loss = 0.0
+            print(f"\nTask {i+1}, Epoch {epoch+1}: Total batches = {len(train_loader)}")
+            for batch_rxns, batch_yields, mask in train_loader:
+                batch_rxns = jnp.array(batch_rxns.numpy())
+                batch_yields = jnp.array(batch_yields.numpy(),  dtype=jnp.float32)
+                mask = jnp.array(mask.numpy())  # Shape: (max_batch_size,)
+
+                # Reset KV cache for each batch to ensure it's not reused across different batches
+                cos_freq, sin_freq, positions_padded, cache_k, cache_v = Mistral._precompute(max_len)
+                # Perform a training step
+                loss, params, opt_state  = train_step( params, static, batch_rxns, batch_yields, mask, cos_freq, sin_freq, positions_padded, cache_k, cache_v, mha_dropout_key, opt_state)
+            
+                loss = loss.item()
+                #print(f"step={step}, loss={loss}")
+                # Accumulate loss for monitoring
+                running_loss += loss
+                if step % 10 == 0 :
+                    avg_loss = running_loss / step
+                    print(f"Task {i+1}, Epoch {epoch+1}, Step {step}, Average Loss: {np.round(avg_loss, 6)}")
+                step += 1
+
+            # Calculate and record the epoch loss
+            epoch_loss =  running_loss/ len(train_loader)
+            epoch_losses.append(epoch_loss)
+            print(f"Task {i+1}, Epoch {epoch+1} Completed. Epoch Loss: {np.round(epoch_loss, 6)}\n") 
+
+        # Calculate the average loss over all epochs for this task
+        avg_task_loss = np.mean(epoch_losses)
+        task_losses.append(avg_task_loss)
+        print(f"Task {i+1} Completed. Average Loss over {num_epochs} epochs: {np.round(avg_task_loss, 6)}\n")
+
+        # **Save Epoch Losses for the Current Task**
+        with open(f"epoch_losses_task_{i+1}.txt", 'w') as f:
+            for epoch_idx, loss_value in enumerate(epoch_losses):
+                f.write(f"Epoch {epoch_idx+1}: {loss_value}\n")
+        print(f"Epoch losses for Task {i+1} saved to 'epoch_losses_task_{i+1}.txt'.")
+
+    # **Save All Task Losses**
+    with open("task_losses.txt", 'w') as f:
+        for task_idx, loss_value in enumerate(task_losses):
+            f.write(f"Task {task_idx+1}: {loss_value}\n")
+    print("All task losses saved to 'task_losses.txt'.")
 
     # Step 5 : After training loop (i.e. validation).
     print("\nTotal number of validation batches : ",len(val_loader))

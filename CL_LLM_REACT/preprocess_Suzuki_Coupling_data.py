@@ -1,5 +1,6 @@
 import pandas as pd 
 from rdkit import Chem
+from collections import defaultdict
 # data
 # data
 
@@ -76,3 +77,41 @@ def make_reaction(pathtoxl) :
     df['y'] = df['Product_Yield_PCT_Area_UV']/ 100.
     reactions_df = df[['rxn', 'y']] 
     return reactions_df
+
+
+def create_task_aware_reaction_df(pathtoxl):
+    df = pd.read_excel(pathtoxl)
+    df = df.fillna('None')
+    reaction_smiles_list, task_label_list = [], [] 
+
+    for i, row in df.iterrows():
+        precursors = f" {reactant_1_smiles[row['Reactant_1_Name']]}.{reactant_2_smiles[row['Reactant_2_Name']]}.{catalyst_smiles[row['Catalyst_1_Short_Hand']]}.{ligand_smiles[row['Ligand_Short_Hand']]}.{reagent_1_smiles[row['Reagent_1_Short_Hand']]}.{solvent_1_smiles[row['Solvent_1_Short_Hand']]} "
+        product = 'C1=C(C2=C(C)C=CC3N(C4OCCCC4)N=CC2=3)C=CC2=NC=CC=C12'
+#       print(precursors, product)
+        can_precursors = Chem.MolToSmiles(Chem.MolFromSmiles(precursors.replace('...', '.').replace('..', '.').replace(' .', '').replace('. ', '').replace(' ', '')))
+        can_product = Chem.MolToSmiles(Chem.MolFromSmiles(product))
+
+        # Generate the reaction SMILES and task!
+        reaction_smiles = f"{can_precursors}>>{can_product}"
+        task_label = f"{reactant_1_smiles[row['Reactant_1_Name']]}.{reactant_2_smiles[row['Reactant_2_Name']]}"
+        reaction_smiles_list.append(reaction_smiles)
+        task_label_list.append(task_label)
+    df['rxn']= reaction_smiles_list
+    df['task_label']= task_label_list
+    df['y'] = df['Product_Yield_PCT_Area_UV']/ 100.
+    task_aware_reactions_df = df[['task_label', 'rxn', 'y']] 
+    
+    return task_aware_reactions_df
+
+
+def task_aware_splits(df):
+    """
+    Takes the preprocessed pandas dataframe as input and created a task aware split as defined in Nature Machine Intelligence, 4 (2022),1185–1197.
+    """
+
+    task_groups = defaultdict(list)
+
+    for i, row in df.iterrows():
+        task_groups[row['task_label']].append({"rxn":row["rxn"],"y":row['y']})
+
+    return task_groups
