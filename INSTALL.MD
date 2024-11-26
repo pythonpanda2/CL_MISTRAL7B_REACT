@@ -26,7 +26,7 @@ conda install conda-forge::rdkit
 pip install equinox   ruff sentencepiece    openpyxl quax 
 ```
 
-## INSTALLATION on ANL JLSE for NVIDIA GH200
+## INSTALLATION on ANL JLSE : NVIDIA GH200
 All the production runs were performed on NVIDIA GH200.  We used a Miniconda for 'Linux-aarch64'. Next steps are easy.  
 
 ```
