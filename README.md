@@ -35,3 +35,16 @@ python -u  /path/CL_MISTRAL7B_REACT/CL_LLM_REACT/Jointly_fine_tune_Mistral7B_and
 -s 0.1 \ # LoRA scale : Typical value is 2 x rank. Kept low for now. 
 -lr 1e-5  #Learning rate
 ```
+
+### Task-Aware Fine Tuning with LoRA with no CL
+
+```
+python -u  /path/CL_MISTRAL7B_REACT/CL_LLM_REACT/task_aware_fine_tune_Mistral7B_and_MHA_head_with_LORA_no_CL.py  -p /path/CL_MISTRAL7B_REACT/model_files \
+ -xl /path/CL_MISTRAL7B_REACT/data/Suzuki-Miyaura/aap9112_Data_File_S1.xlsx \
+ -N 27  \ # Number of epochs
+ -rs 7193 \ # Random seed
+-r 16 \ # LoRA rank : optimized
+-s 4 \ # LoRA scale : optimized
+-lr 2e-4 \ #Learning rate
+-nh 4  \Number of attention heads for read out regression MHA : Optimized
+```
