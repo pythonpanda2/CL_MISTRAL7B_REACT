@@ -26,3 +26,19 @@ conda install conda-forge::rdkit
 pip install equinox   ruff sentencepiece    openpyxl quax 
 ```
 
+## INSTALLATION on ANL JLSE for NVIDIA GH200
+All the production runs were performed on NVIDIA GH200.  We used a Miniconda for 'Linux-aarch64'. Next steps are easy.  
+
+```
+conda env create -f env_gh200.yml 
+```
+
+To activate this environment, use
+```
+$ conda activate py_gh200
+```
+To deactivate an active environment, use
+```
+$ conda deactivate
+```
+
