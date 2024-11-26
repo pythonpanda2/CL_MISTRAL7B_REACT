@@ -24,16 +24,17 @@ python -u  /path/CL_MISTRAL7B_REACT/CL_LLM_REACT/Jointly_fine_tune_Mistral7B_and
 ```
 
 
-The third setting is to jointly fine tune Mistral 7B + MHA regression head with Low-Rank Adaptation (LoRA). **Krishnan : This is what you should be running. Modify the  `fine_tune_launch.sh` with the following line and `submit.sh` launches the fine tune launch script. I have increased the batch size to 128  inside the `MISTRAL7B_MHA_LOADER.py`. Modify any of the paramter below as needed.**
+The third setting is to jointly fine tune Mistral 7B + MHA regression head with Low-Rank Adaptation (LoRA). 
 
 ```
 python -u  /path/CL_MISTRAL7B_REACT/CL_LLM_REACT/Jointly_fine_tune_Mistral7B_and_MHA_head_with_LORA.py  -p /path/CL_MISTRAL7B_REACT/model_files \
  -xl /path/CL_MISTRAL7B_REACT/data/Suzuki-Miyaura/aap9112_Data_File_S1.xlsx \
- -N 2  \ # Number of epochs
- -rs 1 \ # Seed
--r 8 \ # LoRA rank
--s 0.1 \ # LoRA scale : Typical value is 2 x rank. Kept low for now. 
--lr 1e-5  #Learning rate
+ -N 27  \ # Number of epochs
+ -rs 7193 \ # Seed
+-r 16 \ # LoRA rank
+-s 4 \ # LoRA scale : The optimal  value for our dataset is  4 x rank. Provides comparable results to full fine tuning!
+-lr 2e-4  #Learning rate
+-nh 4 #Number of attention heads for read out regression MHA : Optimized
 ```
 
 ### Task-Aware Fine Tuning with LoRA with no CL
@@ -46,5 +47,5 @@ python -u  /path/CL_MISTRAL7B_REACT/CL_LLM_REACT/task_aware_fine_tune_Mistral7B_
 -r 16 \ # LoRA rank : optimized
 -s 4 \ # LoRA scale : optimized
 -lr 2e-4 \ #Learning rate
--nh 4  \Number of attention heads for read out regression MHA : Optimized
+-nh 4  #Number of attention heads for read out regression MHA : Optimized
 ```
