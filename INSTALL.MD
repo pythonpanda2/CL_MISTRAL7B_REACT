@@ -30,7 +30,7 @@ pip install equinox   ruff sentencepiece    openpyxl quax
 All the production runs were performed on NVIDIA GH200.  We used a Miniconda for 'Linux-aarch64'. Next steps are easy.  
 
 ```
-conda env create -f env_gh200.yml 
+conda env create -f env/env_gh200.yml 
 ```
 
 To activate this environment, use
