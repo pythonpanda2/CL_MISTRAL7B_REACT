@@ -20,12 +20,12 @@ import numpy as np
 import pandas as pd 
 import optax
 import quax
+import csv
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"]="false"
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"]=".70"
 os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"]="platform"
 #device = torch.device("cpu")
-
 
 def get_argparse():
     """
@@ -56,8 +56,7 @@ def compute_val(params, static,  val_rxns,  cos_freq, sin_freq, positions_padded
 
     return predictions
 
-# Define the plotting function
-def plot_true_vs_predicted(true_labels, predicted_labels, rmse, r2):
+def plot_true_vs_predicted(true_labels, predicted_labels, rmse, r2, filename="true_vs_pred_yield.png"):
     plt.figure(figsize=(10, 6))
     plt.scatter(true_labels, predicted_labels, color='b', alpha=0.6, s=10, label='Predicted vs True')
     plt.plot([true_labels.min(), true_labels.max()], [true_labels.min(), true_labels.max()], 'k--', lw=2)
@@ -66,8 +65,19 @@ def plot_true_vs_predicted(true_labels, predicted_labels, rmse, r2):
     plt.title('True vs Predicted Yield', fontsize=14)
     plt.legend([f'RMSE: {rmse:.2f}\nR²: {r2:.2f}'], loc='upper left')
     plt.grid(True)
-    plt.savefig("true_vs_pred_yield.png", dpi=500, bbox_inches='tight')
+    plt.savefig(filename, dpi=500, bbox_inches='tight')
+    plt.close()  # Close the figure to free memory
 
+def write_metric_to_csv(filename, metric_matrix, num_tasks):
+    with open(filename, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        # Write header
+        header = ['After_Task'] + [f'Task_{j+1}' for j in range(num_tasks)]
+        writer.writerow(header)
+        # Write data rows
+        for i in range(num_tasks):
+            row = [f'Task_{i+1}'] + metric_matrix[i, :].tolist()
+            writer.writerow(row)
 
 def main():
     '''
@@ -98,29 +108,27 @@ def main():
     #tokenized_smiles, yields, max_len = preprocess_data(df)
 
     tokenized_rxn = [Mistral.tokenize_smiles(smiles) for smiles in task_aware_reactions_df['rxn']]
-    max_len =     max(len(sublist) for sublist in tokenized_rxn) #len(tokenized_rxn[0])
+    max_len =     max(len(sublist) for sublist in tokenized_rxn) 
     print(f"\n Sequence length: {max_len}")
     del tokenized_rxn # We dont need this after the max_len is estimated!
     
     # 70/30 split
     train_df, test_df = train_test_split(task_aware_reactions_df, test_size=0.3, random_state=seed)
-    tokenize_test_rxn = [Mistral.tokenize_smiles(smiles) for smiles in test_df['rxn']]
-    padded_test_rxn = [sublist + [0] * (max_len - len(sublist)) for sublist in tokenize_test_rxn]
-    val_rxn =  np.stack([np.array(aa) for aa in padded_test_rxn])
-    val_yields = np.array(test_df['y'], dtype=np.float32)
-    # Convert JAX arrays to PyTorch tensors
-    #train_rxns_torch = torch.tensor(train_rxn)
-    #train_yields_torch = torch.tensor(train_yields, dtype=torch.float32)
-    val_rxns_torch = torch.tensor(val_rxn)
-    val_yields_torch = torch.tensor(val_yields, dtype=torch.float32)
+    def convert_df_to_token_y(inp_df):
+        tokenize_inp_rxn = [Mistral.tokenize_smiles(smiles) for smiles in inp_df['rxn']]
+        padded_inp_rxn = [sublist + [0] * (max_len - len(sublist)) for sublist in tokenize_inp_rxn]
+        x_rxn_npy =  np.stack([np.array(aa) for aa in padded_inp_rxn])
+        y_yields_npy = np.array(inp_df['y'], dtype=np.float32)
+        return x_rxn_npy, y_yields_npy
 
-    # Create dataset objects for training and validation
-    #train_dataset = ReactionDataset(train_rxns_torch, train_yields_torch)
-    val_dataset = ReactionDataset(val_rxns_torch, val_yields_torch)
-
+    def create_data_loader(x_rxn_npy, y_yields_npy):
+        """ Convert the np arrays to torch data loader object"""
+        x_rxns_torch = torch.tensor(x_rxn_npy)
+        y_yields_torch = torch.tensor(y_yields_npy, dtype=torch.float32)
+        rxn_dataset = ReactionDataset(x_rxns_torch, y_yields_torch)
+        rxn_loader = DataLoader(rxn_dataset, batch_size=Mistral.args.max_batch_size, shuffle=True, collate_fn=pad_collate_fn)
+        return rxn_loader
     print("\n Batch size:",Mistral.args.max_batch_size)
-    #train_loader = DataLoader(train_dataset, batch_size=Mistral.args.max_batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=Mistral.args.max_batch_size, shuffle=True)
 
     # Initialize the regression block
     embed_dim = 4096  # Assuming embedding dimension of Mistral
@@ -165,7 +173,7 @@ def main():
         predictor = eqx.combine(params, static)
         predictions = predictor(batch_rxns,  cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key, True)
         #loss = jnp.mean((predictions - batch_yields) ** 2)
-        loss = jnp.mean( optax.losses.l2_loss(predictions.squeeze(), batch_yields) ) 
+        loss =  optax.losses.l2_loss(predictions.squeeze(), batch_yields) 
 
         loss = loss * mask  # Zero out losses for padded samples
     
@@ -220,28 +228,38 @@ def main():
     
         return batch_rxns, batch_yields, mask
 
-
     print("\n Total number of training epochs : ", num_epochs )
     task_grouped_train = task_aware_splits(train_df)
     print("\n Total number of training task groups : ",len(task_grouped_train))
 
+    # Initialize a list to store task data
+    task_data_list = []
+
     # Training Loop with DataLoader
     task_losses = []  # List to store average loss per task
-    for i, key in enumerate(task_grouped_train.keys() ) :
+    task_keys = list(task_grouped_train.keys())
+    # Initialize evaluation matrices
+    num_tasks = len(task_grouped_train)
+    metrics = {
+    'avg_eval_loss': np.full((num_tasks, num_tasks), np.nan),
+    'rmse': np.full((num_tasks, num_tasks), np.nan),
+    'r2': np.full((num_tasks, num_tasks), np.nan)
+    }
+
+    for i, key in enumerate(task_keys ) :
+        # Prepare the data for the current task
+        task_df = pd.DataFrame(task_grouped_train[key])
+        print(f"Task {i+1}: {key}, Samples Size: {task_df.shape[0]}")
+
+        # Tokenization and padding
+        train_rxn, train_yields = convert_df_to_token_y(task_df) # numpy arrays
+        # Store the task data for later evaluation
+        task_data_list.append((train_rxn, train_yields))
+
+        #Convert to torch tensors
+        train_loader = create_data_loader(train_rxn, train_yields)
         epoch_losses = []  # List to store epoch losses for this task
         for epoch in range(num_epochs):
-            
-            task_df = pd.DataFrame(task_grouped_train[key])
-            print(f"Task {i+1}: {key}, Samples Size: {task_df.shape[0]}")
-            tokenize_task_rxn = [Mistral.tokenize_smiles(smiles) for smiles in task_df['rxn']]
-            padded_task_rxn = [sublist + [0] * (max_len - len(sublist)) for sublist in tokenize_task_rxn]
-            train_rxn =  np.stack([np.array(aa) for aa in padded_task_rxn ])
-            train_yields = np.array(task_df['y'], dtype=np.float32)
-
-            train_rxns_torch = torch.tensor(train_rxn)
-            train_yields_torch = torch.tensor(train_yields, dtype=torch.float32)
-            train_dataset = ReactionDataset(train_rxns_torch, train_yields_torch)
-            train_loader = DataLoader(train_dataset, batch_size=Mistral.args.max_batch_size, shuffle=True, collate_fn=pad_collate_fn)
             step = 1 
             running_loss = 0.0
             print(f"\nTask {i+1}, Epoch {epoch+1}: Total batches = {len(train_loader)}")
@@ -269,81 +287,210 @@ def main():
             epoch_losses.append(epoch_loss)
             print(f"Task {i+1}, Epoch {epoch+1} Completed. Epoch Loss: {np.round(epoch_loss, 6)}\n") 
 
-        # Calculate the average loss over all epochs for this task
-        avg_task_loss = np.mean(epoch_losses)
-        task_losses.append(avg_task_loss)
-        print(f"Task {i+1} Completed. Average Loss over {num_epochs} epochs: {np.round(avg_task_loss, 6)}\n")
-
+        # We are sequentially overfitting each task in to the model. Hence the last epoch is the corresponding task loss!
+        task_losses.append(epoch_losses[-1])
+        print(f"Task {i+1} Completed. Last Epoch Loss: {np.round(epoch_losses[-1], 6)}\n")
+        
         # **Save Epoch Losses for the Current Task**
-        with open(f"epoch_losses_task_{i+1}.txt", 'w') as f:
+        with open(f"epoch_losses_task_{i+1}.csv", 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
             for epoch_idx, loss_value in enumerate(epoch_losses):
-                f.write(f"Epoch {epoch_idx+1}: {loss_value}\n")
-        print(f"Epoch losses for Task {i+1} saved to 'epoch_losses_task_{i+1}.txt'.")
+                writer.writerow([epoch_idx+1, loss_value])
+        print(f"Epoch losses for Task {i+1} saved to 'epoch_losses_task_{i+1}.csv'.")
+        
+        # Evaluate on all previous tasks (including the current one)
+        for j in range(i + 1):  # i + 1 because Python indices start from 0
+            eval_task_rxn, eval_task_yields = task_data_list[j]
+
+            # Create a DataLoader for the evaluation data
+            eval_loader = create_data_loader(eval_task_rxn, eval_task_yields) # DataLoader(eval_dataset,batch_size=Mistral.args.max_batch_size,shuffle=False,collate_fn=pad_collate_fn)
+
+            # Initialize variables for evaluation
+            total_eval_loss = 0.0
+            total_samples = 0
+            task_predictions = []
+            task_true_labels = []
+
+            for val_rxns, val_yields, mask in eval_loader:
+                val_rxns = jnp.array(val_rxns.numpy())
+                val_yields = jnp.array(val_yields.numpy(), dtype=jnp.float32)
+                mask = jnp.array(mask.numpy(), dtype=jnp.float32)
+
+                # Reset KV cache for each batch
+                cos_freq, sin_freq, positions_padded, cache_k, cache_v = Mistral._precompute(max_len)
+
+                # Calculate predictions without updating the model
+                predictions = compute_val(params,static,val_rxns,cos_freq,sin_freq,positions_padded,cache_k,cache_v)
+
+                # Compute per-sample losses
+                losses =  optax.losses.l2_loss(predictions.squeeze(), val_yields) 
+
+                losses = loss * mask  # Zero out losses for padded samples
+
+                # Sum the losses and count real samples
+                batch_loss = jnp.sum(losses)
+                batch_real_samples = jnp.sum(mask)
+        
+                # Accumulate total loss and total samples
+                total_eval_loss += batch_loss.item()
+                total_samples += batch_real_samples.item()
+                
+                # Collect predictions and true labels for real samples
+                real_predictions = np.asarray(predictions.squeeze(), dtype=np.float32)[mask.astype(bool)]
+                real_true_labels = np.asarray(val_yields, dtype=np.float32)[mask.astype(bool)]
+
+                task_predictions.append(real_predictions)
+                task_true_labels.append(real_true_labels)
+
+            # Calculate average loss for the current evaluation task
+            avg_eval_loss = total_eval_loss / total_samples
+            metrics['avg_eval_loss'][i, j] = avg_eval_loss  # Use the avg_eval_loss computed in the loop above
+
+            # Optionally, you can compute RMSE and R² score here
+            task_predictions = np.concatenate(task_predictions, axis=0)
+            task_true_labels = np.concatenate(task_true_labels, axis=0)
+            rmse = mean_squared_error(task_true_labels, task_predictions, squared=False)
+            r2 = r2_score(task_true_labels, task_predictions)
+            metrics['rmse'][i, j] = rmse
+            metrics['r2'][i, j] = r2
+            print(f"After training Task {i+1}, Evaluation on Task {j+1}: Loss={np.round(avg_eval_loss,6)}, RMSE={np.round(rmse,5)}, R²={np.round(r2,5)}")
+    print(f"Evaluation matrix updated and saved after Task {i+1}.")
+    for metric_name, metric_matrix in metrics.items():
+        filename = f'{metric_name}_train_task_eval_matrix.csv'
+        write_metric_to_csv(filename, metric_matrix, num_tasks)
+        print(f"{metric_name.capitalize()} matrix saved to '{filename}'.")
+
 
     # **Save All Task Losses**
-    with open("task_losses.txt", 'w') as f:
+    with open("task_losses.csv", 'w', newline='') as taskcsv:
+        writer = csv.writer(taskcsv)
         for task_idx, loss_value in enumerate(task_losses):
-            f.write(f"Task {task_idx+1}: {loss_value}\n")
-    print("All task losses saved to 'task_losses.txt'.")
+            writer.writerow([task_idx+1, loss_value])
+    print("All task losses saved to 'task_losses.csv'.")
 
     # Step 5 : After training loop (i.e. validation).
-    print("\nTotal number of validation batches : ",len(val_loader))
-    running_val_loss = 0.0
-    running_r2_score = 0.0
-    all_predictions = []
-    all_true_labels = []
+    # === Evaluation on the Test Set ===
+    print("\nEvaluating on the 30% test set.")
 
-    step = 1
-    for val_rxns, val_yields in val_loader:
-        val_rxns = jnp.array(val_rxns.numpy())
-        val_yields = jnp.array(val_yields.numpy(), dtype=jnp.float32)
+    # Split the test_df into task-specific dataframes
+    task_grouped_test = task_aware_splits(test_df)
+    num_test_tasks = len(task_grouped_test)
+    print(f"\nTotal number of test task groups: {num_test_tasks}")
 
-        # Reset KV cache for each batch to ensure it's not reused across different batches
-        cos_freq, sin_freq, positions_padded, cache_k, cache_v = Mistral._precompute(max_len)
+    test_metrics = {
+        'avg_eval_loss': np.full((num_test_tasks + 1,), np.nan),
+        'rmse': np.full((num_test_tasks + 1,), np.nan),
+        'r2': np.full((num_test_tasks + 1,), np.nan) }
 
-        # Calculate embeddings and predictions without updating the model
-        predictions = compute_val(params, static,  val_rxns, cos_freq, sin_freq, positions_padded, cache_k, cache_v )
+    overall_predictions = []
+    overall_true_labels = []
 
-        # Calculate validation loss
-        val_loss = jnp.mean((predictions.squeeze() - val_yields) ** 2)
-        running_val_loss += val_loss.item()
-        
-        print("\nPredicted shape , values : ", predictions.shape, predictions)
-        print("\nTrue Yield : ", val_yields )
-        # Collect predictions and true labels
-        all_predictions.append(np.asarray(predictions.squeeze(),  dtype=np.float32 ) )  # Flatten predictions
-        all_true_labels.append(np.asarray(val_yields,  dtype=np.float32 ))
+    # Evaluate on each test task
+    for i, key in enumerate(task_grouped_test.keys()):
+        task_df = pd.DataFrame(task_grouped_test[key])
+        print(f"\nEvaluating on Test Task {i+1}: {key}, Sample Size: {task_df.shape[0]}")
 
-        # Calculate R² score
-        #r2 = r2_score( np.asarray(val_yields), np.asarray( predictions[:, -1, 0]  ) ) # Use just the last dim of pred
-        #r2_alt = r2_score( np.asarray(val_yields, dtype=np.float32), np.asarray( jnp.mean(predictions, axis=1).squeeze(),  dtype=np.float32  ) )
-        #print("Step , MAE Loss, R2 value for current batch :", step, val_loss, r2_alt)
-        #running_r2_score += r2_alt
-        step += 1
-    print(f"\nValidation Loss: {np.round(running_val_loss / len(train_loader),6 )}")
-    # Flatten collected lists to get overall predictions and true labels
-    all_predictions = np.concatenate(all_predictions, axis=0,  dtype=np.float32)
-    all_true_labels = np.concatenate(all_true_labels, axis=0,  dtype=np.float32)
+        # Tokenize and pad the test data
+        test_rxn, test_yields = convert_df_to_token_y(task_df)
+        test_loader = create_data_loader(test_rxn, test_yields)
 
-    # Save true labels and predictions to a .npy file for future use
-    np.save("val_true_labels.npy", np.asarray(all_true_labels))
-    np.save("val_predictions.npy", np.asarray(all_predictions))
+        # Initialize variables for evaluation
+        total_eval_loss = 0.0
+        total_samples = 0
+        task_predictions = []
+        task_true_labels = []
 
-    # Compute RMSE
-    rmse = mean_squared_error(all_true_labels, all_predictions, squared=False)
-    # Compute R² score
-    r2 = r2_score(all_true_labels, all_predictions)
-    # Plotting True vs. Predicted
-    plot_true_vs_predicted(all_true_labels, all_predictions, rmse, r2)
-    # Print RMSE and R²
-    print(f"\nValidation RMSE: {np.round(rmse, 5)}")
-    print(f"\nValidation R² Score: {np.round(r2, 5)}")
+        for val_rxns, val_yields, mask in test_loader:
+            val_rxns = jnp.array(val_rxns.numpy())
+            val_yields = jnp.array(val_yields.numpy(), dtype=jnp.float32)
+            mask = jnp.array(mask.numpy(), dtype=jnp.float32)
 
-    #val_loss, r2_val=  running_val_loss / len(val_loader),  running_r2_score / len(val_loader)
+            # Reset KV cache for each batch
+            cos_freq, sin_freq, positions_padded, cache_k, cache_v = Mistral._precompute(max_len)
 
-    #print(f"[Double Check!]Validation Loss: {val_loss}")
-    #print(f"[Double Check!] Validation R2: {r2_val}")
+            # Calculate predictions
+            predictions = compute_val(params, static, val_rxns, cos_freq, sin_freq, positions_padded, cache_k, cache_v)
 
+            # Compute per-sample losses
+            losses = optax.losses.l2_loss(predictions.squeeze(), val_yields)
+            losses = losses * mask  # Zero out losses for padded samples
+
+            # Sum the losses and count real samples
+            batch_loss = jnp.sum(losses)
+            batch_real_samples = jnp.sum(mask)
+
+            # Accumulate total loss and total samples
+            total_eval_loss += batch_loss.item()
+            total_samples += batch_real_samples.item()
+
+            # Collect predictions and true labels for real samples
+            real_predictions = np.asarray(predictions.squeeze(), dtype=np.float32)[mask.astype(bool)]
+            real_true_labels = np.asarray(val_yields, dtype=np.float32)[mask.astype(bool)]
+
+            task_predictions.append(real_predictions)
+            task_true_labels.append(real_true_labels)
+
+        # Calculate average loss for the current test task
+        avg_eval_loss = total_eval_loss / total_samples
+        test_metrics['avg_eval_loss'][i] = avg_eval_loss
+
+        # Concatenate predictions and true labels
+        task_predictions = np.concatenate(task_predictions, axis=0)
+        task_true_labels = np.concatenate(task_true_labels, axis=0)
+
+        # Collect for overall metrics
+        overall_predictions.append(task_predictions)
+        overall_true_labels.append(task_true_labels)
+
+        # Compute RMSE and R² score for the current task
+        rmse = mean_squared_error(task_true_labels, task_predictions, squared=False)
+        r2 = r2_score(task_true_labels, task_predictions)
+        test_metrics['rmse'][i] = rmse
+        test_metrics['r2'][i] = r2
+
+        print(f"Test Task {i+1}, Evaluation: Loss={np.round(avg_eval_loss,6)}, RMSE={np.round(rmse,5)}, R²={np.round(r2,5)}")
+
+        # Plot true vs predicted for this task
+        plot_filename = f"true_vs_predicted_test_task_{i+1}.png"
+        plot_true_vs_predicted(task_true_labels, task_predictions, rmse, r2, plot_filename)
+
+    # Concatenate overall predictions and true labels
+    overall_predictions = np.concatenate(overall_predictions, axis=0)
+    overall_true_labels = np.concatenate(overall_true_labels, axis=0)
+
+    # Compute overall metrics
+    overall_loss = mean_squared_error(overall_true_labels, overall_predictions)
+    overall_rmse = mean_squared_error(overall_true_labels, overall_predictions, squared=False)
+    overall_r2 = r2_score(overall_true_labels, overall_predictions)
+
+    # Store the overall metrics
+    test_metrics['avg_eval_loss'][-1] = overall_loss
+    test_metrics['rmse'][-1] = overall_rmse
+    test_metrics['r2'][-1] = overall_r2
+
+    print(f"\nOverall Test Evaluation: Loss={np.round(overall_loss,6)}, RMSE={np.round(overall_rmse,5)}, R²={np.round(overall_r2,5)}")
+
+    # Save the overall true labels and predictions
+    np.save("test_true_labels.npy", overall_true_labels)
+    np.save("test_predictions.npy", overall_predictions)
+
+    # Plot overall true vs predicted
+    plot_true_vs_predicted(overall_true_labels, overall_predictions, overall_rmse, overall_r2, "true_vs_predicted_test_overall.png")
+
+    # Prepare task names
+    task_names = [f'Test_Task_{i+1}' for i in range(num_test_tasks)] + ['Overall']
+
+    # Create a DataFrame for the test metrics
+    test_metrics_df = pd.DataFrame({
+        'Task': task_names,
+        'Loss': test_metrics['avg_eval_loss'],
+        'RMSE': test_metrics['rmse'],
+        'R2': test_metrics['r2']
+        })
+
+    # Save the test metrics to a CSV file
+    test_metrics_df.to_csv("test_metrics.csv", index=False)
+    print("Test metrics saved to 'test_metrics.csv'.")
 
 # Standard boilerplate to call the main() function to begin
 # the program.
