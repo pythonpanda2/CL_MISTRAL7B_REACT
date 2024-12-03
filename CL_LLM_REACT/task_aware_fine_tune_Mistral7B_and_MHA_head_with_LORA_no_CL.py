@@ -56,13 +56,13 @@ def compute_val(params, static,  val_rxns,  cos_freq, sin_freq, positions_padded
 
     return predictions
 
-def plot_true_vs_predicted(true_labels, predicted_labels, rmse, r2, filename="true_vs_pred_yield.png"):
+def plot_true_vs_predicted(true_labels, predicted_labels, rmse, r2, filename="true_vs_pred_yield.png", title="True vs Predicted Yield"):
     plt.figure(figsize=(10, 6))
     plt.scatter(true_labels, predicted_labels, color='b', alpha=0.6, s=10, label='Predicted vs True')
     plt.plot([true_labels.min(), true_labels.max()], [true_labels.min(), true_labels.max()], 'k--', lw=2)
     plt.xlabel('True Yield', fontsize=12)
     plt.ylabel('Predicted Yield', fontsize=12)
-    plt.title('True vs Predicted Yield', fontsize=14)
+    plt.title(title, fontsize=14)
     plt.legend([f'RMSE: {rmse:.2f}\nR²: {r2:.2f}'], loc='upper left')
     plt.grid(True)
     plt.savefig(filename, dpi=500, bbox_inches='tight')
@@ -450,9 +450,14 @@ def main():
 
         print(f"Test Task {i+1}, Evaluation: Loss={np.round(avg_eval_loss,6)}, RMSE={np.round(rmse,5)}, R²={np.round(r2,5)}")
 
+        # Save predictions and true labels for the task
+        np.save(f"test_true_labels_task_{i+1}.npy", task_true_labels)
+        np.save(f"test_predictions_task_{i+1}.npy", task_predictions)
+
         # Plot true vs predicted for this task
         plot_filename = f"true_vs_predicted_test_task_{i+1}.png"
-        plot_true_vs_predicted(task_true_labels, task_predictions, rmse, r2, plot_filename)
+        plot_title = f"True vs Predicted Yield for Task {i+1}"
+        plot_true_vs_predicted(task_true_labels, task_predictions, rmse, r2, plot_filename, plot_title)
 
     # Concatenate overall predictions and true labels
     overall_predictions = np.concatenate(overall_predictions, axis=0)
@@ -476,7 +481,8 @@ def main():
 
     # Plot overall true vs predicted
     plot_true_vs_predicted(overall_true_labels, overall_predictions, overall_rmse, overall_r2, "true_vs_predicted_test_overall.png")
-
+    # After computing overall metrics
+    plot_true_vs_predicted(overall_true_labels, overall_predictions, overall_rmse, overall_r2, filename="true_vs_predicted_test_overall.png", title="True vs Predicted Yield for Overall Test Set" )
     # Prepare task names
     task_names = [f'Test_Task_{i+1}' for i in range(num_test_tasks)] + ['Overall']
 
