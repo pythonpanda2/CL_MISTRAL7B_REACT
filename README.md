@@ -1,6 +1,6 @@
 # Continual Learning On LLM for Chemical Reactions
 
-The Mistral-7B model weights needs to be ported to JAX/Equinox. This can be done by following the steps described in the [mistral_jax](https://github.com/AakashKumarNain/mistral_jax/blob/main/instructions.md) repo. Alternatively, one can also download them from [here](https://uofi.box.com/s/ljd66kpkgte8duofz3us2zihb70btwww). 
+The Mistral-7B model weights needs to be ported to JAX/Equinox. This can be done by following the steps described in the [mistral_jax](https://github.com/AakashKumarNain/mistral_jax/blob/main/instructions.md) repo. Alternatively, one can also download them from [here]([[https://uofi.box.com/s/ljd66kpkgte8duofz3us2zihb70btwww]([https://buffalo.box.com/s/ljd66kpkgte8duofz3us2zihb70btwww)](https://uofi.box.com/s/ljd66kpkgte8duofz3us2zihb70btwww](https://buffalo.box.com/s/ljd66kpkgte8duofz3us2zihb70btwww))). 
 
 
 ### Running the code
