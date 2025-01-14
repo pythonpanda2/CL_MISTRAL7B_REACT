@@ -49,3 +49,16 @@ python -u  /path/CL_MISTRAL7B_REACT/CL_LLM_REACT/task_aware_fine_tune_Mistral7B_
 -lr 2e-4 \ #Learning rate
 -nh 4  #Number of attention heads for read out regression MHA : Optimized
 ```
+
+### Task-Aware Fine Tuning with LoRA with Experience Replay (i.e. CL)
+We have different variations of the task aware expereince replay implemented in our workflow. The variations come in the form of how the gradients are computed. We do get similar results between the two implementations. 
+
+```
+python -u  /path/CL_MISTRAL7B_REACT/CL_LLM_REACT/task_aware_fine_tune_Mistral7B_and_MHA_head_with_LORA_combined_loss_grad_Experience_Replay.py  -p /path/CL_MISTRAL7B_REACT/model_files  -xl /path/CL_MISTRAL7B_REACT/data/Suzuki-Miyaura/aap9112_Data_File_S1.xlsx  -N 15   -rs 7193  -r 16 -s 4  -lr 2e-4 -nh 4 
+```
+
+```
+python -u  /path/CL_MISTRAL7B_REACT/CL_LLM_REACT/task_aware_fine_tune_Mistral7B_and_MHA_head_with_LORA_separate_grad_tree_Experience_Replay.py  -p /path/CL_MISTRAL7B_REACT/model_files  -xl  /path/CL_MISTRAL7B_REACT/data/Suzuki-Miyaura/aap9112_Data_File_S1.xlsx  -N 15   -rs 7193  -r 16 -s 4  -lr 2e-4 -nh 4 
+```
+
+
