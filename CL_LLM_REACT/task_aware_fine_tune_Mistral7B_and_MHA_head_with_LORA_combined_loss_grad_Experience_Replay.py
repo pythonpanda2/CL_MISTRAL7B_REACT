@@ -182,6 +182,28 @@ def main():
 
         return loss
 
+    @eqx.filter_value_and_grad
+    @eqx.filter_jit
+    def combined_loss_fn(params, static, batch_rxns, batch_yields, mask, exp_rxns, exp_yields, exp_mask, cos_freq, sin_freq, positions_padded, cache_k, cache_v,  mha_dropout_key):
+        # Combine both current and replay batches into one loss computation
+        predictor = eqx.combine(params, static)
+    
+        # Predictions for current task
+        predictions_current = predictor(batch_rxns, cos_freq, sin_freq, positions_padded, cache_k, cache_v, mha_dropout_key, True)
+        loss_current = optax.losses.l2_loss(predictions_current.squeeze(), batch_yields)
+        loss_current = loss_current * mask  # Zero out padded samples
+        loss_current = jnp.sum(loss_current) / jnp.sum(mask)
+
+        # Predictions for replay batch
+        predictions_replay = predictor(exp_rxns, cos_freq, sin_freq, positions_padded, cache_k, cache_v, mha_dropout_key, True)
+        loss_replay = optax.losses.l2_loss(predictions_replay.squeeze(), exp_yields)
+        loss_replay = loss_replay * exp_mask  # Zero out padded samples
+        loss_replay = jnp.sum(loss_replay) / jnp.sum(exp_mask)
+
+        # Combine the two losses
+        total_loss = loss_current + loss_replay
+        return total_loss
+
     #Step 2 : Training step
     @eqx.filter_jit
     def train_step(params, static,  batch_rxns, batch_yields, mask, cos_freq, sin_freq, positions_padded, cache_k, cache_v, dropout_key, opt_state):
@@ -191,6 +213,15 @@ def main():
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = eqx.apply_updates(params, updates)
         return loss, params, opt_state
+    
+    @eqx.filter_jit
+    def exp_train_step(params, static, batch_rxns, batch_yields, mask, exp_rxns, exp_yields, exp_mask, cos_freq, sin_freq, positions_padded, cache_k, cache_v,  mha_dropout_key, opt_state):
+        # Compute combined loss and gradients
+        total_loss, grads = combined_loss_fn(params, static,batch_rxns, batch_yields, mask,exp_rxns, exp_yields, exp_mask,cos_freq, sin_freq, positions_padded, cache_k, cache_v, mha_dropout_key)
+        # Update parameters using combined gradients
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        params = eqx.apply_updates(params, updates) 
+        return total_loss, params, opt_state
 
     # Step 3: Initialize optimizer
     print("\n Setting up optimizer with a learning rate = ", lr)
@@ -254,40 +285,94 @@ def main():
 
         # Tokenization and padding
         train_rxn, train_yields = convert_df_to_token_y(task_df) # numpy arrays
-        # Store the task data for later evaluation
-        task_data_list.append((train_rxn, train_yields))
 
-        #Convert to torch tensors
+        #Convert to train_loader for current task
         train_loader = create_data_loader(train_rxn, train_yields)
+
+        # Before adding the current task data to task_data_list,
+        # create the exp_train_loader from all past tasks
+        if i > 0:
+            # We have past tasks: combine them
+            exp_rxn_list = []
+            exp_yields_list = []
+            for t in range(i):
+                rxn_data, yields_data = task_data_list[t]
+                exp_rxn_list.append(rxn_data)
+                exp_yields_list.append(yields_data)
+
+            # Concatenate all past tasks' data
+            exp_rxn_all = np.concatenate(exp_rxn_list, axis=0)
+            exp_yields_all = np.concatenate(exp_yields_list, axis=0)
+
+            # Create the exp_train_loader
+            exp_train_loader = create_data_loader(exp_rxn_all, exp_yields_all)
+        else:
+            # For the very first task, no previous tasks exist
+            exp_train_loader = None
+
         epoch_losses = []  # List to store epoch losses for this task
         for epoch in range(num_epochs):
             step = 1 
             running_loss = 0.0
             print(f"\nTask {i+1}, Epoch {epoch+1}: Total batches = {len(train_loader)}")
-            for batch_rxns, batch_yields, mask in train_loader:
-                batch_rxns = jnp.array(batch_rxns.numpy())
-                batch_yields = jnp.array(batch_yields.numpy(),  dtype=jnp.float32)
-                mask = jnp.array(mask.numpy())  # Shape: (max_batch_size,)
-
-                # Reset KV cache for each batch to ensure it's not reused across different batches
-                cos_freq, sin_freq, positions_padded, cache_k, cache_v = Mistral._precompute(max_len)
-                # Perform a training step
-                loss, params, opt_state  = train_step( params, static, batch_rxns, batch_yields, mask, cos_freq, sin_freq, positions_padded, cache_k, cache_v, mha_dropout_key, opt_state)
             
-                loss = loss.item()
-                #print(f"step={step}, loss={loss}")
-                # Accumulate loss for monitoring
-                running_loss += loss
-                if step % 10 == 0 :
-                    avg_loss = running_loss / step
-                    print(f"Task {i+1}, Epoch {epoch+1}, Step {step}, Average Loss: {np.round(avg_loss, 6)}")
-                step += 1
+            if i > 0:
+                # We have an experience replay loader, train with both simultaneously
+                for (batch_rxns, batch_yields, mask), (exp_rxns, exp_yields, exp_mask) in zip(train_loader, exp_train_loader):
+                    # Convert to jnp arrays
+                    batch_rxns = jnp.array(batch_rxns.numpy())
+                    batch_yields = jnp.array(batch_yields.numpy(), dtype=jnp.float32)
+                    mask = jnp.array(mask.numpy(), dtype=jnp.float32)
+
+                    exp_rxns = jnp.array(exp_rxns.numpy())
+                    exp_yields = jnp.array(exp_yields.numpy(), dtype=jnp.float32)
+                    exp_mask = jnp.array(exp_mask.numpy(), dtype=jnp.float32)
+
+                    # Precompute frequencies and caches
+                    cos_freq, sin_freq, positions_padded, cache_k, cache_v = Mistral._precompute(max_len)
+
+                    # Compute combined loss and gradients
+                    total_loss, params, opt_state  = exp_train_step(params, static, 
+                                                 batch_rxns, batch_yields, mask, 
+                                                 exp_rxns, exp_yields, exp_mask, 
+                                                 cos_freq, sin_freq, positions_padded, cache_k, cache_v, mha_dropout_key, opt_state)
+
+                    # Accumulate loss for monitoring
+                    running_loss += total_loss.item()
+                    if step % 10 == 0:
+                        avg_loss = running_loss / step
+                        print(f"Task {i+1}, Epoch {epoch+1}, Step {step}, Average Combined Loss: {np.round(avg_loss, 6)}")
+                    step += 1
+
+            else: 
+                for batch_rxns, batch_yields, mask in train_loader:
+                    batch_rxns = jnp.array(batch_rxns.numpy())
+                    batch_yields = jnp.array(batch_yields.numpy(),  dtype=jnp.float32)
+                    mask = jnp.array(mask.numpy())  # Shape: (max_batch_size,)
+
+                    # Reset KV cache for each batch to ensure it's not reused across different batches
+                    cos_freq, sin_freq, positions_padded, cache_k, cache_v = Mistral._precompute(max_len)
+                    # Perform a training step
+                    loss, params, opt_state  = train_step( params, static, batch_rxns, batch_yields, mask, cos_freq, sin_freq, positions_padded, cache_k, cache_v, mha_dropout_key, opt_state)
+            
+                    loss = loss.item()
+                    #print(f"step={step}, loss={loss}")
+                    # Accumulate loss for monitoring
+                    running_loss += loss
+                    if step % 10 == 0 :
+                        avg_loss = running_loss / step
+                        print(f"Task {i+1}, Epoch {epoch+1}, Step {step}, Average Loss: {np.round(avg_loss, 6)}")
+                    step += 1
 
             # Calculate and record the epoch loss
-            epoch_loss =  running_loss/ len(train_loader)
+            if i > 0:
+                epoch_loss =  running_loss/ ( len(train_loader) + len(exp_train_loader) )
+            else:
+                epoch_loss =  running_loss/ len(train_loader)
             epoch_losses.append(epoch_loss)
             print(f"Task {i+1}, Epoch {epoch+1} Completed. Epoch Loss: {np.round(epoch_loss, 6)}\n") 
-
+        # After finishing training on the current task, add its data to the task_data_list
+        task_data_list.append((train_rxn, train_yields))
         # We are sequentially overfitting each task in to the model. Hence the last epoch is the corresponding task loss!
         task_losses.append(epoch_losses[-1])
         print(f"Task {i+1} Completed. Last Epoch Loss: {np.round(epoch_losses[-1], 6)}\n")
