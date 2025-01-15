@@ -6,7 +6,7 @@ Continual learning, also known as lifelong learning, addresses this challenge by
 
 ## Objective
 
-This project adapts the Mistral-7B (v0.1), a 7.3-billion-parameter open-weight LLM with 32 transformer layers, for predicting chemical reaction yields. Specifically, we integrate a custom **Multi-Head Attention Regression (MHAR)** head into the pretrained Mistral-7B model to enhance its capabilities in predicting chemical reaction yields.
+This project adapts the **Mistral-7B** (v0.1), a 7.3-billion-parameter open-weight LLM with 32 transformer layers, for predicting chemical reaction yields. Specifically, we integrate a custom **Multi-Head Attention Regression (MHAR)** head into the pretrained Mistral-7B model to enhance its capabilities in predicting chemical reaction yields.
 
 ### Key Features
 - **Baseline Fine-Tuning**: The model is fine-tuned using both full fine-tuning and Low-Rank Adaptation (LoRA) methods on the Suzuki Coupling Reactions dataset. These methods serve as benchmarks for predictive performance in traditional end-to-end supervised training.
