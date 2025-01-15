@@ -1,15 +1,46 @@
 # Continual Learning for Large Language Models in Predicting Chemical Reaction Yields
-Large Language Models (LLMs) based on transformer architectures have demonstrated impressive capabilities in learning and generating text from vast datasets. However, in many real-world scenarios, such extensive training data may not be available. For instance, in synthetic chemistry labs or autonomous experimental setups, data is often generated in continuous batches as new chemical reactions are conducted. In such cases, a model needs to continuously update its knowledge as experimental insights evolve, all while minimizing the forgetting of previously learned information.
 
-Continual learning, also known as lifelong learning, is a machine learning paradigm designed to address this challenge. It enables models to learn and adapt continuously while retaining prior knowledge. This paradigm is especially critical for tasks involving ever-evolving, non-stationary data streams, such as the chemical reaction experiments described above.
+Large Language Models (LLMs) based on transformer architectures have shown remarkable capabilities in learning and generating text from vast datasets. However, in real-world scenarios like synthetic chemistry labs or autonomous experimental setups, data often arrives incrementally as new chemical reactions are conducted. In such cases, models must continuously update their knowledge while minimizing the loss of previously learned information.
 
-In this work, we utilize Mistral-7B (v0.1), a 7.3-billion parameter open-weight large language model constructed with 32 transformer layers. We adapt and modify Mistral-7B to predict the chemical reaction yield.  Specifically, we enhance the original pretrained Mistral-7B by integrating a custom multi-head attention regression (MHAR) head, designed to learn chemical reaction yields. We will utilize the Suzuki Coupling Reactions dataset throught out this study. The custom MHAR head is jointly fine-tuned using both full fine-tuning and Low-Rank Adaptation (LoRA) methods to evaluate the predictive performance of this framework in a standard, epochal, end-to-end supervised training scenario where all training data is available. All the baseline predicitive performance are derived under these two setting.
+Continual learning, also known as lifelong learning, addresses this challenge by enabling models to learn and adapt incrementally while retaining prior knowledge. This paradigm is especially critical for tasks involving non-stationary data streams, such as evolving chemical reaction experiments.
 
-Now we turn out attention to a mimic real world scenrios where all the training data is not available at a time and new information is generated as contineous batches. Task-incremental learning focuses on mastering a series of distinct tasks. For example, a human learning to play various musical instruments or a robot learning different types of manipulations can be categorized into unique task groups, each with its own learning objective. In our framework, we adopt a task-aware learning paradigm, where each data subset corresponds to a specific pair of reactants, forming a distinct task group.  When a new pair of reactants is introduced, it creates a new task group for the model to learn. Specifically, we will split the Suzuki Coupling datasets in the different task groups using the said task grouping. Unlike traditional fully supervised fine-tuning approaches, the task-aware paradigm requires the model to learn each task sequentially while preserving knowledge from previous tasks.
+## Objective
 
-We leverage the optimal LoRA configuration that achieves comparable performance to full fine-tuning for task-aware fine-tuning. This setting allows us to explore the phenomenon of catastrophic forgetting, where a model loses previously acquired knowledge as it learns new tasks. By employing task-aware LoRA, we highlight the challenges of catastrophic forgetting in LLMs when processing non-stationary data streams. Finally, we demonstrate how experience replay can effectively mitigate catastrophic forgetting, ensuring the retention of prior knowledge while learning new tasks.
+This project adapts the Mistral-7B (v0.1), a 7.3-billion-parameter open-weight LLM with 32 transformer layers, for predicting chemical reaction yields. Specifically, we integrate a custom **Multi-Head Attention Regression (MHAR)** head into the pretrained Mistral-7B model to enhance its capabilities in predicting chemical reaction yields.
 
-All experiments and implementations are carried out in JAX and Equinox.
+### Key Features
+- **Baseline Fine-Tuning**: The model is fine-tuned using both full fine-tuning and Low-Rank Adaptation (LoRA) methods on the Suzuki Coupling Reactions dataset. These methods serve as benchmarks for predictive performance in traditional end-to-end supervised training.
+  
+- **Task-Incremental Learning**: To mimic real-world scenarios where training data arrives in continuous batches, we implement a **task-aware learning paradigm**:
+  - Each data subset corresponds to a distinct pair of reactants, forming a specific task group.
+  - New task groups are introduced sequentially, requiring the model to learn each task while preserving knowledge from previous ones.
+  - The Suzuki Coupling dataset is partitioned into these task groups to simulate incremental learning scenarios.
+
+## Approach
+
+1. **Baseline Training**:
+   - The MHAR head is jointly fine-tuned with the pretrained Mistral-7B using both full fine-tuning and LoRA.
+   - These experiments establish baseline predictive performance in standard training settings where all data is available at once.
+
+2. **Task-Aware Learning**:
+   - The optimal LoRA configuration (achieving comparable performance to full fine-tuning) is used for task-aware fine-tuning.
+   - This approach evaluates **catastrophic forgetting**, where the model loses prior knowledge as it learns new tasks.
+
+3. **Mitigating Forgetting**:
+   - **Experience Replay**: We demonstrate how replaying past data effectively mitigates catastrophic forgetting, allowing the model to retain prior knowledge while learning from new tasks.
+
+## Results
+
+This framework highlights the challenges and solutions for training LLMs on non-stationary data streams:
+- **Performance Benchmarks**: Full fine-tuning and LoRA are compared in standard training settings.
+- **Forgetting Analysis**: Task-aware fine-tuning explores the impact of catastrophic forgetting on LLMs.
+- **Replay Effectiveness**: Experience replay is shown to be a key technique for preserving prior knowledge during task-incremental learning.
+
+## Implementation Details
+
+- All experiments are implemented in **JAX** and **Equinox**, leveraging their flexibility and efficiency for neural network training.
+- The codebase is modular and extensible, enabling further experimentation with continual learning techniques.
+
 
 ### Porting Model Weights to JAX
 The Mistral-7B model weights needs to be ported to JAX/Equinox. This can be done by following the steps described in the [mistral_jax](https://github.com/AakashKumarNain/mistral_jax/blob/main/instructions.md) repo. Alternatively, one can also download them from [here](https://buffalo.box.com/s/ljd66kpkgte8duofz3us2zihb70btwww). 
