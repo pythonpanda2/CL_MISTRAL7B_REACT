@@ -28,7 +28,8 @@ This project adapts the **Mistral-7B** (v0.1), a 7.3-billion-parameter open-weig
    - This approach highlight the challenges of **catastrophic forgetting** in LLMs when processing non-stationary data streams, where the model loses prior knowledge as it learns new tasks.
 
 3. **Mitigating Forgetting**:
-   - Finally, we demonstrate how **experience replay**, a continual learning technique can effectively mitigate catastrophic forgetting. Experience replay ensures the retention of prior knowledge while learning new tasks.
+   - Finally, we demonstrate how **experience replay**, a continual learning technique can effectively mitigate catastrophic forgetting.
+   - Experience replay ensures the retention of prior knowledge while learning new tasks.
 
 
 ## Results
