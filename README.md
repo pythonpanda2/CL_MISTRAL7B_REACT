@@ -24,17 +24,19 @@ This project adapts the **Mistral-7B** (v0.1), a 7.3-billion-parameter open-weig
 
 2. **Task-Aware Learning**:
    - The optimal LoRA configuration (achieving comparable performance to full fine-tuning) is used for task-aware fine-tuning.
-   - This approach evaluates **catastrophic forgetting**, where the model loses prior knowledge as it learns new tasks.
+   - Initially, task-aware fine-tuning is performed **without any continual learning**. This setting allows us to explore the phenomenon of **catastrophic forgetting**, where a model loses previously acquired knowledge as it learns new tasks.
+   - This approach highlight the challenges of **catastrophic forgetting** in LLMs when processing non-stationary data streams, where the model loses prior knowledge as it learns new tasks.
 
 3. **Mitigating Forgetting**:
-   - **Experience Replay**: We demonstrate how replaying past data effectively mitigates catastrophic forgetting, allowing the model to retain prior knowledge while learning from new tasks.
+   - Finally, we demonstrate how **experience replay**, a continual learning technique can effectively mitigate catastrophic forgetting. Experience replay ensures the retention of prior knowledge while learning new tasks.
+
 
 ## Results
 
 This framework highlights the challenges and solutions for training LLMs on non-stationary data streams:
 - **Performance Benchmarks**: Full fine-tuning and LoRA are compared in standard training settings.
 - **Forgetting Analysis**: Task-aware fine-tuning explores the impact of catastrophic forgetting on LLMs.
-- **Replay Effectiveness**: Experience replay is shown to be a key technique for preserving prior knowledge during task-incremental learning.
+- **Replay Effectiveness**: Experience replay is shown to be a useful continual learning technique for preserving prior knowledge during task-incremental learning.
 
 ## Implementation Details
 
