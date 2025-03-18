@@ -205,7 +205,7 @@ def main():
 
         # Combine gradients
         # Just sum the gradients from both tasks (assuming same parameter structure).
-        combined_grads = jax.tree_util.tree_map(lambda g1, g2: g1 + g2, grads_current, grads_replay)
+        combined_grads = jax.tree_util.tree_map(lambda g1, g2: (g1 + g2)/2, grads_current, grads_replay)
 
         # Update parameters using combined gradients
         updates, opt_state = optimizer.update(combined_grads, opt_state, params)
