@@ -4,6 +4,8 @@ Large Language Models (LLMs) based on transformer architectures have shown remar
 
 Continual learning, also known as lifelong learning, addresses this challenge by enabling models to learn and adapt incrementally while retaining prior knowledge. This paradigm is especially critical for tasks involving non-stationary data streams, such as evolving chemical reaction experiments.
 
+![](https://github.com/pythonpanda2/CL_MISTRAL7B_REACT/blob/main/figure/plot_CL.pdf)
+
 ## Objective
 
 This project adapts the **Mistral-7B** (v0.1), a 7.3-billion-parameter open-weight LLM with 32 transformer layers, for predicting chemical reaction yields. Specifically, we integrate a custom **Multi-Head Attention Regression (MHAR)** head into the pretrained Mistral-7B model to enhance its capabilities in predicting chemical reaction yields.
