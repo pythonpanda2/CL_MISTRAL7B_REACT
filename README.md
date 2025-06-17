@@ -4,7 +4,7 @@ Large Language Models (LLMs) based on transformer architectures have shown remar
 
 Continual learning, also known as lifelong learning, addresses this challenge by enabling models to learn and adapt incrementally while retaining prior knowledge. This paradigm is especially critical for tasks involving non-stationary data streams, such as evolving chemical reaction experiments.
 
-![](https://github.com/pythonpanda2/CL_MISTRAL7B_REACT/blob/main/figure/plot_CL.pdf)
+![](https://github.com/pythonpanda2/CL_MISTRAL7B_REACT/blob/main/figure/plot_CL.png)
 
 ## Objective
 
