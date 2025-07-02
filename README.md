@@ -1,4 +1,4 @@
-# Continual Learning for Large Language Models in Predicting Chemical Reaction Yields
+# LifeLong Learning for Large Language Models in Predicting Chemical Reaction Yields
 
 Large Language Models (LLMs) based on transformer architectures have shown remarkable capabilities in learning and generating text from vast datasets. However, in real-world scenarios like synthetic chemistry labs or autonomous experimental setups, data often arrives incrementally as new chemical reactions are conducted. In such cases, models must continuously update their knowledge while minimizing the loss of previously learned information.
 
