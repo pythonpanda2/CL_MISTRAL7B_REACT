@@ -60,5 +60,12 @@ Check out the [RUN.md](https://github.com/pythonpanda2/CL_MISTRAL7B_REACT/blob/m
 ## How to cite ?
 If you are using our workflow  in your research, please cite us as
 ```
-Sivaraman G, Jackson N, Raghavan K. LifeLong Learning for Large Language Models in Predicting Chemical Reaction Yields. ChemRxiv. 2025; doi:10.26434/chemrxiv-2025-xtvpc This content is a preprint and has not been peer-reviewed.
+@article{lan2023elephant,
+  title={LifeLong Learning for Large Language Models in Predicting Chemical Reaction Yields.},
+  author={Sivaraman, Ganesh and Jackson, Nicholas, and Raghavan, Krishnan},
+  journal={ChemRxiv.},
+  doi={10.26434/chemrxiv-2025-xtvpc}, 
+  year={2025}
+}
+This content is a preprint and has not been peer-reviewed.
 ```
