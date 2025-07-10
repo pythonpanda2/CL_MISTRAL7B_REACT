@@ -60,7 +60,7 @@ Check out the [RUN.md](https://github.com/pythonpanda2/CL_MISTRAL7B_REACT/blob/m
 ## How to cite ?
 If you are using our workflow  in your research, please cite us as
 ```
-@article{lan2023elephant,
+@article{Sivaraman_Jackson_Raghavan_CL_2025,
   title={LifeLong Learning for Large Language Models in Predicting Chemical Reaction Yields.},
   author={Sivaraman, Ganesh and Jackson, Nicholas, and Raghavan, Krishnan},
   journal={ChemRxiv.},
