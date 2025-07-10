@@ -56,3 +56,9 @@ Check out the [INSTALL.MD](https://github.com/pythonpanda2/CL_MISTRAL7B_REACT/bl
 
 ### Running 
 Check out the [RUN.md](https://github.com/pythonpanda2/CL_MISTRAL7B_REACT/blob/main/RUN.MD) to see details of running the training scripts. 
+
+## How to cite ?
+If you are using our workflow  in your research, please cite us as
+```
+Sivaraman G, Jackson N, Raghavan K. LifeLong Learning for Large Language Models in Predicting Chemical Reaction Yields. ChemRxiv. 2025; doi:10.26434/chemrxiv-2025-xtvpc This content is a preprint and has not been peer-reviewed.
+```
