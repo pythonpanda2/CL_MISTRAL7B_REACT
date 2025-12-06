@@ -32,6 +32,7 @@ This project adapts the **Mistral-7B** (v0.1), a 7.3-billion-parameter open-weig
 3. **Mitigating Forgetting**:
    - Finally, we demonstrate how **experience replay**, a continual learning technique can effectively mitigate catastrophic forgetting.
    - Experience replay ensures the retention of prior knowledge while learning new tasks.
+   - Experience replay with memory buffer.
 
 
 ## Results
